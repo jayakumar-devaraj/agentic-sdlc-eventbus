@@ -1,0 +1,177 @@
+# agentic-sdlc-eventbus
+
+Single-node Apache Kafka broker (KRaft mode, no ZooKeeper) that acts as the sole communication
+channel between the other three repos in the `agentic-sdlc-*` platform split. This repo owns
+**no application code and no database** — it is infrastructure only: one `docker-compose.yml`
+and the conventions every producer/consumer must follow.
+
+Repos `agentic-sdlc-control-plane`, `agentic-sdlc-mlops`, and `agentic-sdlc-eventbus` (this repo)
+are domain-agnostic platform backbone. Nothing in this repo may reference `url-shortener-api`
+concepts — if you find such a reference, it's a design defect.
+
+For the cross-repo view (end-to-end signal trace, event contract schema, all 4 repos' compose
+files, reliability analysis, migration sequence) see the living Master Plan document at
+`C:\srcCode\4-repo-migration-PLAN.md` — this README only covers what's local to this repo.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    subgraph eventbus_net["eventbus Docker network (this repo)"]
+        broker["kafka broker<br/>apache/kafka-native:4.1.2<br/>KRaft combined mode"]
+        client["disposable apache/kafka:4.1.2<br/>client container<br/>(admin CLI only, not persistent)"]
+        client -. "kafka-topics.sh, kafka-cluster.sh, etc.<br/>broker:19092" .-> broker
+    end
+    host["Docker Desktop host<br/>localhost:9092"] --> broker
+    other["Repo 1 / 2 / 4's own containers<br/>(separate compose projects)<br/>host.docker.internal:9092"] --> broker
+```
+
+`apache/kafka-native` ships no CLI tooling (see Verification below), which is why admin operations
+run from a separate disposable container rather than `docker compose exec` into `broker` itself.
+
+## Quick start
+
+```bash
+docker compose up -d
+docker compose ps            # wait for STATUS = healthy
+```
+
+Broker is reachable at `localhost:9092` from the host, or `broker:19092` from other containers
+on the same Docker network (see [Cross-repo connectivity](#cross-repo-connectivity-not-yet-wired)).
+
+## Topic naming convention
+
+```
+{service}.{event-type}.v{n}
+```
+
+No tenant segment — the platform is single-tenant today. Examples used by the other repos:
+
+| Topic | Producer | Consumer(s) |
+|---|---|---|
+| `url-shortener.request-telemetry.v1` | Repo 4 | Repo 2 |
+| `mlops.drift-detected.v1` | Repo 2 | Repo 1 |
+| `control-plane.gate-decision.v1` | (human/UI, relayed by Repo 1's decision API) | Repo 1 |
+| `control-plane.run-outcome.v1` | Repo 1 | Repo 2 |
+
+This convention is locked once any producer ships against it — changing it later requires
+touching every repo's producer/consumer config, not just this one.
+
+**Caveat confirmed during testing**: Kafka warns when topic names mix `.` and `_` in the same
+position, since both collapse to the same JMX metric name internally (e.g. `foo.bar` and `foo_bar`
+would collide). Our convention uses only `.` as a separator and `-` inside service names
+(`url-shortener`, not `url_shortener`) — never `_` — so this doesn't apply today. Don't introduce
+an underscore into a topic name without re-checking this.
+
+## Plug-and-play strategy (this repo's half)
+
+**(a) Auto-topic-creation** — `KAFKA_AUTO_CREATE_TOPICS_ENABLE=true` means any producer can
+publish to a not-yet-existing topic and the broker creates it on the fly, with
+`KAFKA_NUM_PARTITIONS=3` and replication factor 1 (single broker — no other value is possible
+node-count-wise). **What it does not solve**: consumers still don't know a topic exists until
+their next metadata refresh — see (b) — and it gives zero control over per-topic partition
+counts, retention, or compaction; every auto-created topic gets the cluster defaults above.
+**[ASSUMPTION]** 3 partitions/topic and replication factor 1 are defensible only for local/dev —
+flagged again in the memory budget & production section below.
+
+**(b) Consumer-side pattern subscription** — locked decision 5 requires Repo 1's consumer to use
+`consumer.subscribe(pattern=...)` rather than naming topics explicitly, so it can react to
+`agentic-sdlc-mlops` and future services without a code change. Discovery latency is governed by
+the consumer's `metadata.max.age.ms`:
+- Default (300000 ms / 5 min): a topic auto-created by Repo 2 can take up to 5 minutes to appear
+  in Repo 1's subscription — unacceptable for drift-to-run latency.
+- Repo 1 must tune this down (e.g. 30000 ms / 30 s) to bound discovery latency to well under a
+  minute. Trade-off: every consumer instance in the group issues a full metadata request that
+  often, adding broker-side load that scales with `(number of consumers) / metadata.max.age.ms`.
+  At 30s and a handful of consumers this is negligible; it stops being negligible in the
+  hundreds-of-consumers range, which this platform is nowhere near.
+- This setting lives in Repo 1's consumer config, not here — noted here because it's the
+  direct consequence of this repo's auto-create default.
+
+**(e) What replaces auto-create at real-cluster scale**: explicit topic provisioning (e.g. a
+`kafka-topics.sh --create` step in CI, or a Terraform/Ansible-managed topic manifest) checked in
+per-repo, with per-topic partition/replication/retention tuned deliberately. Auto-create is
+unacceptable in production because (1) a typo in a producer's topic name silently creates a
+junk topic instead of failing loudly, (2) every auto-created topic inherits cluster-wide
+defaults that are almost never right for every topic at once, and (3) it gives any authenticated
+producer the implicit power to create unbounded topics — a resource-exhaustion vector with no
+approval gate.
+
+## Memory budget
+
+This repo's compose file runs **one** container, `kafka`, at `mem_limit: 2 GiB`. The full four-repo
+cross-repo budget table (checked against the 8 GiB WSL2 allocation) is authoritative in the central
+plan doc's [Infrastructure Manifests](file:///C:/srcCode/4-repo-migration-PLAN.md) section, not
+duplicated here — update it there, not here, as repos 1, 2, and 4 are built.
+
+## Cross-repo connectivity (not yet wired)
+
+No other repo exists yet (build order: eventbus → url-shortener-api → mlops → control-plane).
+When they do, each repo's own `docker-compose.yml` will *not* redeclare this broker — they connect
+to it as an already-running external service, since locked decision 7 forbids a shared multi-repo
+compose file. This keeps `docker compose up` in every repo independently runnable with no sibling
+checkout. The exact `bootstrap.servers` value depends on the caller, and getting it wrong is a
+common Docker mistake:
+
+| Caller | Value |
+|---|---|
+| Containers on this repo's own `eventbus` network | `broker:19092` |
+| Host machine (Windows/WSL2, e.g. CLI tools run directly, not in a container) | `localhost:9092` |
+| Containers in another repo's own separate compose project | `host.docker.internal:9092` — **not** `localhost`, which inside a different container resolves to that container itself, not this host |
+
+## Verification
+
+`apache/kafka-native` ships only the compiled `kafka.Kafka` binary — no `kafka-*.sh` CLI tools are
+in the image (confirmed by inspection: `/opt/kafka/bin/` doesn't exist). All admin/CLI verification
+below runs from a disposable `apache/kafka:4.1.2` (JVM, full tooling) client container attached to
+this repo's `eventbus` Docker network, talking to the broker's internal listener at `broker:19092`.
+This is why the compose file's own healthcheck is a bare TCP probe rather than a protocol-level
+check — see the comment in `docker-compose.yml`.
+
+```bash
+# Broker health / API versions
+docker run --rm --network eventbus apache/kafka:4.1.2 \
+  /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server broker:19092
+
+# Confirm KRaft mode (no ZooKeeper) and cluster id
+docker run --rm --network eventbus apache/kafka:4.1.2 \
+  /opt/kafka/bin/kafka-cluster.sh cluster-id --bootstrap-server broker:19092
+
+# Prove auto-create: publish to a topic that doesn't exist yet, then list + describe it
+echo "smoke-test" | docker run --rm -i --network eventbus apache/kafka:4.1.2 \
+  /opt/kafka/bin/kafka-console-producer.sh --bootstrap-server broker:19092 \
+  --topic url-shortener.request-telemetry.v1
+docker run --rm --network eventbus apache/kafka:4.1.2 \
+  /opt/kafka/bin/kafka-topics.sh --list --bootstrap-server broker:19092
+docker run --rm --network eventbus apache/kafka:4.1.2 \
+  /opt/kafka/bin/kafka-topics.sh --describe --topic url-shortener.request-telemetry.v1 \
+  --bootstrap-server broker:19092   # expect PartitionCount: 3, ReplicationFactor: 1
+
+# Consumer-group lag (once a real consumer group exists in Repo 1)
+docker run --rm --network eventbus apache/kafka:4.1.2 \
+  /opt/kafka/bin/kafka-consumer-groups.sh \
+  --bootstrap-server broker:19092 --describe --group <consumer-group-name>
+```
+
+### Functional verification report
+
+This repo has no application code to unit-test — the table below is its QA deliverable instead: every
+row was actually run against a real container, not asserted from reading the compose file.
+
+| Check | Method | Result |
+|---|---|---|
+| Broker reaches `healthy` | compose healthcheck (TCP probe) | PASS — healthy within one 10s interval |
+| KRaft mode confirmed (no ZooKeeper) | `kafka-cluster.sh cluster-id` via disposable client | PASS — returned pinned `CLUSTER_ID: GbUkriPcWUY1D0RM32nhAw` |
+| Auto-create on first produce | console-producer to nonexistent topic, then `--list` | PASS — topic appeared |
+| Auto-create defaults correct | `kafka-topics.sh --describe` | PASS — `PartitionCount: 3, ReplicationFactor: 1` |
+| Cluster ID + topic data persist across `docker compose restart` | created a marker topic, ran `docker compose restart kafka`, re-checked cluster-id and topic list | PASS — both survived the restart |
+| Cluster ID correctly resets on `down -v` (volume removed) | `down -v` then `up`, re-checked cluster-id | PASS — behaves as designed, not a regression |
+
+This same sequence (health wait + auto-create validation) is what `.github/workflows/ci.yml` runs
+on every push/PR — the report above isn't a one-time manual check, it's continuously re-verified.
+
+## Phase 2 note
+
+Nothing in this repo changes for Phase 2 (real ML model in Repo 2). The event bus is
+schema-and-topic-convention driven, not payload-aware — a new topic or a v2 envelope field is a
+Repo 1/2/4 concern, not a broker reconfiguration here.
