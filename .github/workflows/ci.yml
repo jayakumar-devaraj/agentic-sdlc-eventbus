@@ -1,0 +1,47 @@
+name: broker-smoke-test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  compose-up-and-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start broker
+        run: docker compose up -d
+
+      - name: Wait for healthy status
+        run: |
+          for i in $(seq 1 30); do
+            status="$(docker inspect --format='{{.State.Health.Status}}' agentic-sdlc-eventbus || echo starting)"
+            echo "attempt $i: $status"
+            if [ "$status" = "healthy" ]; then
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "broker never became healthy" >&2
+          docker compose logs
+          exit 1
+
+      - name: Validate auto-create + topic listing
+        # apache/kafka-native has no bundled kafka-*.sh CLI tools, so admin
+        # operations run from a disposable full-tooling client container on
+        # the same 'eventbus' network instead of `compose exec` into the broker.
+        run: |
+          docker run --rm --network eventbus apache/kafka:4.1.2 \
+            /opt/kafka/bin/kafka-topics.sh --create --if-not-exists \
+            --topic url-shortener.request-telemetry.v1 --bootstrap-server broker:19092
+          docker run --rm --network eventbus apache/kafka:4.1.2 \
+            /opt/kafka/bin/kafka-topics.sh --list --bootstrap-server broker:19092 \
+            | grep -q "url-shortener.request-telemetry.v1"
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v
