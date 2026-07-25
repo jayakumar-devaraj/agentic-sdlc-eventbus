@@ -1,0 +1,54 @@
+services:
+  kafka:
+    image: apache/kafka-native:4.1.2
+    hostname: broker
+    container_name: agentic-sdlc-eventbus
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://broker:19092,CONTROLLER://broker:29093,PLAINTEXT_HOST://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://broker:19092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@broker:29093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      # Plug-and-play strategy (locked decision 5): producers rely on this for
+      # zero-touch topic provisioning; Repo 1's consumer still uses pattern
+      # subscription rather than depending on topics existing at startup.
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_NUM_PARTITIONS: 3
+      KAFKA_LOG_DIRS: /mnt/shared/config/kraft-combined-logs
+      # Fixed so cluster metadata stays valid across container restarts against
+      # the same named volume. Generated once; do not regenerate for this repo.
+      CLUSTER_ID: GbUkriPcWUY1D0RM32nhAw
+    volumes:
+      - kafka-data:/mnt/shared/config
+    networks:
+      - eventbus
+    healthcheck:
+      # apache/kafka-native ships only the compiled kafka.Kafka binary — no
+      # kafka-*.sh CLI tools are bundled in this image (confirmed by
+      # inspection), so the healthcheck is a bare TCP probe of the listener
+      # rather than a protocol-level check. Full CLI verification (topic
+      # list/create, broker-api-versions) runs from a disposable
+      # apache/kafka:4.1.2 client container instead — see README.
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/9092' || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    mem_limit: 2g
+    restart: unless-stopped
+
+networks:
+  eventbus:
+    name: eventbus
+
+volumes:
+  kafka-data:
