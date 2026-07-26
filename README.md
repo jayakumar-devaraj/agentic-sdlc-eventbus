@@ -169,17 +169,8 @@ address cannot correctly serve all three:
 | Host machine (Windows/WSL2, e.g. CLI tools run directly, not in a container) | `localhost:9092` | `PLAINTEXT_HOST` |
 | Containers in another repo's own separate compose project | `host.docker.internal:9093` | `DOCKER_INTERNAL` |
 
-**Bug found and fixed during Repo 4's build**: the obvious-looking design — just point other repos'
-containers at `host.docker.internal:9092`, reusing `PLAINTEXT_HOST` — is broken. That listener
-advertises `localhost:9092`; a client that *bootstraps* via `host.docker.internal` still gets told
-to *reconnect* to `localhost` for the actual produce/fetch, and inside a different container
-`localhost` resolves to that container itself, not this host. The connection looked fine (bootstrap
-metadata succeeded) while every actual send silently expired (`KafkaTimeoutError`, logged but not
-raised — Repo 4's reliability design correctly kept the HTTP response unaffected, which is exactly
-why this didn't surface as a crash, only as a quiet delivery failure). Fixed with a dedicated third
-listener (`DOCKER_INTERNAL`, port 9093) advertised as `host.docker.internal:9093` — verified by
-producing from a container with *no* shared network with this repo (matching Repo 4's real
-topology) and confirming the message was actually consumable, not just accepted.
+A bug in the original design (reusing `PLAINTEXT_HOST` for cross-repo access) and the fix that led
+to this three-listener setup are documented in `docs/adr/0001`.
 
 ## Verification
 
