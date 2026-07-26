@@ -12,10 +12,6 @@ Repos `agentic-sdlc-control-plane`, `agentic-sdlc-mlops`, and `agentic-sdlc-even
 are domain-agnostic platform backbone. Nothing in this repo may reference `url-shortener-api`
 concepts — if you find such a reference, it's a design defect.
 
-The cross-repo view (end-to-end signal trace, event contract schema, all 4 repos' compose files,
-reliability analysis, migration sequence) is maintained separately as an internal planning
-document, outside this repo — this README only covers what's local to this repo.
-
 ## Tech stack
 
 - **Broker**: Apache Kafka (KRaft mode, no ZooKeeper) via `apache/kafka-native:4.1.2`
