@@ -21,12 +21,12 @@ files, reliability analysis, migration sequence) see the living Master Plan docu
 ```mermaid
 flowchart LR
     subgraph eventbus_net["eventbus Docker network (this repo)"]
-        broker["kafka broker<br/>apache/kafka-native:4.1.2<br/>KRaft combined mode"]
+        broker["kafka broker<br/>apache/kafka-native:4.1.2<br/>KRaft combined mode<br/>3 listeners"]
         client["disposable apache/kafka:4.1.2<br/>client container<br/>(admin CLI only, not persistent)"]
-        client -. "kafka-topics.sh, kafka-cluster.sh, etc.<br/>broker:19092" .-> broker
+        client -. "kafka-topics.sh, kafka-cluster.sh, etc.<br/>broker:19092 (PLAINTEXT)" .-> broker
     end
-    host["Docker Desktop host<br/>localhost:9092"] --> broker
-    other["Repo 1 / 2 / 4's own containers<br/>(separate compose projects)<br/>host.docker.internal:9092"] --> broker
+    host["Docker Desktop host<br/>localhost:9092 (PLAINTEXT_HOST)"] --> broker
+    other["Repo 1 / 2 / 4's own containers<br/>(separate compose projects)<br/>host.docker.internal:9093 (DOCKER_INTERNAL)"] --> broker
 ```
 
 `apache/kafka-native` ships no CLI tooling (see Verification below), which is why admin operations
@@ -39,8 +39,9 @@ docker compose up -d
 docker compose ps            # wait for STATUS = healthy
 ```
 
-Broker is reachable at `localhost:9092` from the host, or `broker:19092` from other containers
-on the same Docker network (see [Cross-repo connectivity](#cross-repo-connectivity-not-yet-wired)).
+Broker is reachable at `localhost:9092` from the host, `broker:19092` from other containers on the
+same Docker network, or `host.docker.internal:9093` from containers in a different compose project
+(see [Cross-repo connectivity](#cross-repo-connectivity)).
 
 ## Topic naming convention
 
@@ -148,20 +149,33 @@ cross-repo budget table (checked against the 8 GiB WSL2 allocation) is authorita
 plan doc's [Infrastructure Manifests](file:///C:/srcCode/4-repo-migration-PLAN.md) section, not
 duplicated here — update it there, not here, as repos 1, 2, and 4 are built.
 
-## Cross-repo connectivity (not yet wired)
+## Cross-repo connectivity
 
-No other repo exists yet (build order: eventbus → url-shortener-api → mlops → control-plane).
-When they do, each repo's own `docker-compose.yml` will *not* redeclare this broker — they connect
-to it as an already-running external service, since locked decision 7 forbids a shared multi-repo
-compose file. This keeps `docker compose up` in every repo independently runnable with no sibling
-checkout. The exact `bootstrap.servers` value depends on the caller, and getting it wrong is a
-common Docker mistake:
+Wired and verified 2026-07-26 (against `url-shortener-api`, the first consuming repo). Each repo's
+own `docker-compose.yml` does *not* redeclare this broker — they connect to it as an already-running
+external service, since locked decision 7 forbids a shared multi-repo compose file. This keeps
+`docker compose up` in every repo independently runnable with no sibling checkout. The broker
+exposes **three listeners** because "how a client reconnects for produce/fetch" (the *advertised*
+address, not just the address it initially connects to) genuinely differs by caller position — one
+address cannot correctly serve all three:
 
-| Caller | Value |
-|---|---|
-| Containers on this repo's own `eventbus` network | `broker:19092` |
-| Host machine (Windows/WSL2, e.g. CLI tools run directly, not in a container) | `localhost:9092` |
-| Containers in another repo's own separate compose project | `host.docker.internal:9092` — **not** `localhost`, which inside a different container resolves to that container itself, not this host |
+| Caller | Value | Listener |
+|---|---|---|
+| Containers on this repo's own `eventbus` network | `broker:19092` | `PLAINTEXT` |
+| Host machine (Windows/WSL2, e.g. CLI tools run directly, not in a container) | `localhost:9092` | `PLAINTEXT_HOST` |
+| Containers in another repo's own separate compose project | `host.docker.internal:9093` | `DOCKER_INTERNAL` |
+
+**Bug found and fixed during Repo 4's build**: the obvious-looking design — just point other repos'
+containers at `host.docker.internal:9092`, reusing `PLAINTEXT_HOST` — is broken. That listener
+advertises `localhost:9092`; a client that *bootstraps* via `host.docker.internal` still gets told
+to *reconnect* to `localhost` for the actual produce/fetch, and inside a different container
+`localhost` resolves to that container itself, not this host. The connection looked fine (bootstrap
+metadata succeeded) while every actual send silently expired (`KafkaTimeoutError`, logged but not
+raised — Repo 4's reliability design correctly kept the HTTP response unaffected, which is exactly
+why this didn't surface as a crash, only as a quiet delivery failure). Fixed with a dedicated third
+listener (`DOCKER_INTERNAL`, port 9093) advertised as `host.docker.internal:9093` — verified by
+producing from a container with *no* shared network with this repo (matching Repo 4's real
+topology) and confirming the message was actually consumable, not just accepted.
 
 ## Verification
 
@@ -228,6 +242,7 @@ file.
 | Auto-create defaults correct | `kafka-topics.sh --describe` | PASS — `PartitionCount: 3, ReplicationFactor: 1` |
 | Cluster ID + topic data persist across `docker compose restart` | created a marker topic, ran `docker compose restart kafka`, re-checked cluster-id and topic list | PASS — both survived the restart |
 | Cluster ID correctly resets on `down -v` (volume removed) | `down -v` then `up`, re-checked cluster-id | PASS — behaves as designed, not a regression |
+| `DOCKER_INTERNAL` listener reachable and correctly advertised from a container with no shared network | produced from a bare `docker run` container (no `--network eventbus`) via `host.docker.internal:9093`, consumed the message back via the internal network | PASS, after fixing the `PLAINTEXT_HOST`-reuse bug above — message was both accepted and actually retrievable, not just accepted |
 
 This same sequence (health wait + auto-create validation) is what `.github/workflows/ci.yml` runs
 on every push/PR — the report above isn't a one-time manual check, it's continuously re-verified.

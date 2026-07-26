@@ -5,12 +5,25 @@ services:
     container_name: agentic-sdlc-eventbus
     ports:
       - "9092:9092"
+      - "9093:9093"
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
-      KAFKA_LISTENERS: PLAINTEXT://broker:19092,CONTROLLER://broker:29093,PLAINTEXT_HOST://0.0.0.0:9092
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://broker:19092,PLAINTEXT_HOST://localhost:9092
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      # Three listeners because "how a client reconnects for produce/fetch"
+      # (the advertised address) differs by caller position - one address
+      # cannot serve all three, discovered when Repo 4's telemetry silently
+      # failed (see the DOCKER_INTERNAL comment below):
+      #   PLAINTEXT       - internal Docker network (this repo's own containers,
+      #                      and any disposable client on the `eventbus` network)
+      #   PLAINTEXT_HOST  - the Docker Desktop host machine itself (CLI tools
+      #                      run directly, not inside a container)
+      #   DOCKER_INTERNAL - containers in a DIFFERENT compose project (Repos 1/2/4).
+      #                      PLAINTEXT_HOST can't serve them: it advertises
+      #                      `localhost`, which inside another container resolves
+      #                      to that container itself, not this host.
+      KAFKA_LISTENERS: PLAINTEXT://broker:19092,CONTROLLER://broker:29093,PLAINTEXT_HOST://0.0.0.0:9092,DOCKER_INTERNAL://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://broker:19092,PLAINTEXT_HOST://localhost:9092,DOCKER_INTERNAL://host.docker.internal:9093
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT,DOCKER_INTERNAL:PLAINTEXT
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@broker:29093
