@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools==83.0.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentic-events"
+version = "0.1.0"
+description = "Shared event envelope contract for the agentic-sdlc-* platform repos"
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic==2.10.4",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==8.3.4",
+    "pytest-cov==7.1.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["agentic_events*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["agentic_events"]

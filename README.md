@@ -1,9 +1,12 @@
 # agentic-sdlc-eventbus
 
 Single-node Apache Kafka broker (KRaft mode, no ZooKeeper) that acts as the sole communication
-channel between the other three repos in the `agentic-sdlc-*` platform split. This repo owns
-**no application code and no database** — it is infrastructure only: one `docker-compose.yml`
-and the conventions every producer/consumer must follow.
+channel between the other three repos in the `agentic-sdlc-*` platform split, plus the
+`agentic_events` Python package: the shared event envelope contract that Repos 1, 2, and 4 install
+as a dependency. This repo owns **no database** and runs **no producer/consumer processes of its
+own** — the broker is infrastructure-only, and `agentic_events` is a contract library, not an
+application. Actual Kafka client code (topic subscription, publishing, retries) lives in each
+consuming repo, not here.
 
 Repos `agentic-sdlc-control-plane`, `agentic-sdlc-mlops`, and `agentic-sdlc-eventbus` (this repo)
 are domain-agnostic platform backbone. Nothing in this repo may reference `url-shortener-api`
@@ -62,6 +65,47 @@ position, since both collapse to the same JMX metric name internally (e.g. `foo.
 would collide). Our convention uses only `.` as a separator and `-` inside service names
 (`url-shortener`, not `url_shortener`) — never `_` — so this doesn't apply today. Don't introduce
 an underscore into a topic name without re-checking this.
+
+## `agentic_events` package
+
+The shared envelope contract, as a Pydantic model mirroring the JSON Schema in the plan doc's
+section 2 (`EventEnvelope`, `Producer`, `GitTarget`). Scope is deliberately narrow: envelope shape
+validation only — no topic-name helpers, no Kafka client wrapper, no serialization convenience
+functions. Each consuming repo owns its own producer/consumer code and imports this only for a
+consistent, validated envelope shape.
+
+```python
+from agentic_events import EventEnvelope, GitTarget, Producer
+
+envelope = EventEnvelope(
+    event_id=...,
+    correlation_id=run_id,
+    service="agentic-sdlc-mlops",
+    event_type="drift-detected",
+    timestamp=...,
+    producer=Producer(service="agentic-sdlc-mlops", instance_id=hostname),
+    git_target=GitTarget(repo_url="https://github.com/jayakumard10/url-shortener-api.git", branch="main"),
+    scenario_type="brownfield",
+    metrics={"p95_latency_ms": 61.8},
+)
+```
+
+**Installing it into another repo** — pinned to a tag, never tracking `main`:
+
+```
+agentic-events @ git+https://github.com/jayakumard10/agentic-sdlc-eventbus.git@v0.1.0
+```
+
+This reuses the same HTTPS + fine-grained read-only PAT credential mechanism already required for
+clone-per-run (locked decision 3) — no separate package registry needed.
+
+**Running its tests locally:**
+
+```bash
+python -m venv .venv && .venv/Scripts/activate   # or .venv/bin/activate on Linux/WSL
+pip install -e ".[dev]"
+pytest --cov=agentic_events --cov-report=term-missing --cov-fail-under=100
+```
 
 ## Plug-and-play strategy (this repo's half)
 
@@ -153,10 +197,28 @@ docker run --rm --network eventbus apache/kafka:4.1.2 \
   --bootstrap-server broker:19092 --describe --group <consumer-group-name>
 ```
 
-### Functional verification report
+### Unit test coverage report — `agentic_events`
 
-This repo has no application code to unit-test — the table below is its QA deliverable instead: every
-row was actually run against a real container, not asserted from reading the compose file.
+```
+Name                         Stmts   Miss  Cover   Missing
+----------------------------------------------------------
+agentic_events\__init__.py       2      0   100%
+agentic_events\envelope.py      29      0   100%
+----------------------------------------------------------
+TOTAL                           31      0   100%
+```
+
+8 tests in `tests/test_envelope.py`: valid-envelope defaults, rejection of unknown top-level fields
+(`extra="forbid"`), rejection of an invalid `scenario_type` or wrong `schema_version`, `commit_sha`
+allowed null pre-clone, and that `metrics`/`payload` accept arbitrary event-specific shapes. 100%
+coverage is enforced in CI (`--cov-fail-under=100`) — reasonable for a package this small and
+schema-focused; revisit the threshold if the package grows scope later.
+
+### Functional verification report — broker
+
+The broker itself has no application code to unit-test — the table below is its QA deliverable
+instead: every row was actually run against a real container, not asserted from reading the compose
+file.
 
 | Check | Method | Result |
 |---|---|---|
