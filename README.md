@@ -12,9 +12,17 @@ Repos `agentic-sdlc-control-plane`, `agentic-sdlc-mlops`, and `agentic-sdlc-even
 are domain-agnostic platform backbone. Nothing in this repo may reference `url-shortener-api`
 concepts — if you find such a reference, it's a design defect.
 
-For the cross-repo view (end-to-end signal trace, event contract schema, all 4 repos' compose
-files, reliability analysis, migration sequence) see the living Master Plan document at
-`C:\srcCode\4-repo-migration-PLAN.md` — this README only covers what's local to this repo.
+The cross-repo view (end-to-end signal trace, event contract schema, all 4 repos' compose files,
+reliability analysis, migration sequence) is maintained separately as an internal planning
+document, outside this repo — this README only covers what's local to this repo.
+
+## Tech stack
+
+- **Broker**: Apache Kafka (KRaft mode, no ZooKeeper) via `apache/kafka-native:4.1.2`
+- **Package**: Python 3.12, [Pydantic](https://docs.pydantic.dev/) 2.10.4 (`agentic_events` — the
+  shared event envelope contract)
+- **Testing**: pytest 8.3.4, pytest-cov 7.1.0
+- **Infra**: Docker Compose, GitHub Actions CI
 
 ## Architecture
 
@@ -145,9 +153,9 @@ approval gate.
 ## Memory budget
 
 This repo's compose file runs **one** container, `kafka`, at `mem_limit: 2 GiB`. The full four-repo
-cross-repo budget table (checked against the 8 GiB WSL2 allocation) is authoritative in the central
-plan doc's [Infrastructure Manifests](file:///C:/srcCode/4-repo-migration-PLAN.md) section, not
-duplicated here — update it there, not here, as repos 1, 2, and 4 are built.
+cross-repo budget table (checked against the 8 GiB WSL2 allocation) is authoritative in the internal
+planning document's Infrastructure Manifests section, not duplicated here — update it there, not
+here, as repos 1, 2, and 4 are built.
 
 ## Cross-repo connectivity
 

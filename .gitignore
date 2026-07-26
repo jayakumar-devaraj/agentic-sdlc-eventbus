@@ -9,8 +9,8 @@ __pycache__/
 .coverage
 htmlcov/
 
-# Cross-repo planning docs live in the parent C:\srcCode\ directory, outside this
-# repo's tree, so they can't normally end up here — this is a defensive backstop
-# in case one is ever copied in by mistake. Never commit these.
+# Cross-repo planning docs live outside this repo's tree, so they can't normally
+# end up here — this is a defensive backstop in case one is ever copied in by
+# mistake. Never commit these.
 4-repo-migration-PLAN.md
 4-repo-migration-PROMPT.md
