@@ -61,6 +61,7 @@ No tenant segment — the platform is single-tenant today. Examples used by the 
 | `mlops.drift-detected.v1` | Repo 2 | Repo 1 |
 | `control-plane.gate-decision.v1` | (human/UI, relayed by Repo 1's decision API) | Repo 1 |
 | `control-plane.run-outcome.v1` | Repo 1 | Repo 2 |
+| `control-plane.audit.v1` | Repo 1 | (open) |
 
 This convention is locked once any producer ships against it — changing it later requires
 touching every repo's producer/consumer config, not just this one.
