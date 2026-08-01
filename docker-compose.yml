@@ -11,7 +11,7 @@ services:
       KAFKA_PROCESS_ROLES: broker,controller
       # Three listeners because "how a client reconnects for produce/fetch"
       # (the advertised address) differs by caller position - one address
-      # cannot serve all three, discovered when Repo 4's telemetry silently
+      # cannot serve all three, discovered when `url-shortener-api`'s telemetry silently
       # failed (see the DOCKER_INTERNAL comment below):
       #   PLAINTEXT       - internal Docker network (this repo's own containers,
       #                      and any disposable client on the `eventbus` network)
@@ -31,8 +31,8 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
-      # Plug-and-play strategy (locked decision 5): producers rely on this for
-      # zero-touch topic provisioning; Repo 1's consumer still uses pattern
+      # Plug-and-play strategy: producers rely on this for
+      # zero-touch topic provisioning; `agentic-sdlc-control-plane`'s consumer still uses pattern
       # subscription rather than depending on topics existing at startup.
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
       KAFKA_NUM_PARTITIONS: 3
