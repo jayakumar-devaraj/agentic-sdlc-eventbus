@@ -17,7 +17,8 @@ services:
       #                      and any disposable client on the `eventbus` network)
       #   PLAINTEXT_HOST  - the Docker Desktop host machine itself (CLI tools
       #                      run directly, not inside a container)
-      #   DOCKER_INTERNAL - containers in a DIFFERENT compose project (Repos 1/2/4).
+      #   DOCKER_INTERNAL - containers in a DIFFERENT compose project (control-plane,
+      #                     mlops, url-shortener).
       #                      PLAINTEXT_HOST can't serve them: it advertises
       #                      `localhost`, which inside another container resolves
       #                      to that container itself, not this host.
