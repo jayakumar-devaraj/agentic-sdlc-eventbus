@@ -30,7 +30,7 @@ flowchart LR
         client -. "kafka-topics.sh, kafka-cluster.sh, etc.<br/>broker:19092 (PLAINTEXT)" .-> broker
     end
     host["Docker Desktop host<br/>localhost:9092 (PLAINTEXT_HOST)"] --> broker
-    other["`agentic-sdlc-control-plane` / 2 / 4's own containers<br/>(separate compose projects)<br/>host.docker.internal:9093 (DOCKER_INTERNAL)"] --> broker
+    other["control-plane / mlops / url-shortener<br/>own containers, separate compose projects<br/>host.docker.internal:9093 (DOCKER_INTERNAL)"] --> broker
 ```
 
 `apache/kafka-native` ships no CLI tooling (see Verification below), which is why admin operations
@@ -247,4 +247,4 @@ on every push/PR — the report above isn't a one-time manual check, it's contin
 
 Nothing in this repo changes for Phase 2 (real ML model in `agentic-sdlc-mlops`). The event bus is
 schema-and-topic-convention driven, not payload-aware — a new topic or a v2 envelope field is a
-`agentic-sdlc-control-plane`/2/4 concern, not a broker reconfiguration here.
+concern for the producing and consuming services, not a broker reconfiguration here.
