@@ -2,7 +2,7 @@
 
 Single-node Apache Kafka broker (KRaft mode, no ZooKeeper) that acts as the sole communication
 channel between the other three repos in the `agentic-sdlc-*` platform split, plus the
-`agentic_events` Python package: the shared event envelope contract that Repos 1, 2, and 4 install
+`agentic_events` Python package: the shared event envelope contract that the other three repositories install
 as a dependency. This repo owns **no database** and runs **no producer/consumer processes of its
 own** — the broker is infrastructure-only, and `agentic_events` is a contract library, not an
 application. Actual Kafka client code (topic subscription, publishing, retries) lives in each
