@@ -30,7 +30,7 @@ flowchart LR
         client -. "kafka-topics.sh, kafka-cluster.sh, etc.<br/>broker:19092 (PLAINTEXT)" .-> broker
     end
     host["Docker Desktop host<br/>localhost:9092 (PLAINTEXT_HOST)"] --> broker
-    other["Repo 1 / 2 / 4's own containers<br/>(separate compose projects)<br/>host.docker.internal:9093 (DOCKER_INTERNAL)"] --> broker
+    other["`agentic-sdlc-control-plane` / 2 / 4's own containers<br/>(separate compose projects)<br/>host.docker.internal:9093 (DOCKER_INTERNAL)"] --> broker
 ```
 
 `apache/kafka-native` ships no CLI tooling (see Verification below), which is why admin operations
@@ -57,11 +57,11 @@ No tenant segment — the platform is single-tenant today. Examples used by the 
 
 | Topic | Producer | Consumer(s) |
 |---|---|---|
-| `url-shortener.request-telemetry.v1` | Repo 4 | Repo 2 |
-| `mlops.drift-detected.v1` | Repo 2 | Repo 1 |
-| `control-plane.gate-decision.v1` | (human/UI, relayed by Repo 1's decision API) | Repo 1 |
-| `control-plane.run-outcome.v1` | Repo 1 | Repo 2 |
-| `control-plane.audit.v1` | Repo 1 | (open) |
+| `url-shortener.request-telemetry.v1` | `url-shortener-api` | `agentic-sdlc-mlops` |
+| `mlops.drift-detected.v1` | `agentic-sdlc-mlops` | `agentic-sdlc-control-plane` |
+| `control-plane.gate-decision.v1` | (human/UI, relayed by `agentic-sdlc-control-plane`'s decision API) | `agentic-sdlc-control-plane` |
+| `control-plane.run-outcome.v1` | `agentic-sdlc-control-plane` | `agentic-sdlc-mlops` |
+| `control-plane.audit.v1` | `agentic-sdlc-control-plane` | (open) |
 
 This convention is locked once any producer ships against it — changing it later requires
 touching every repo's producer/consumer config, not just this one.
@@ -74,8 +74,8 @@ an underscore into a topic name without re-checking this.
 
 ## `agentic_events` package
 
-The shared envelope contract, as a Pydantic model mirroring the JSON Schema in the plan doc's
-section 2 (`EventEnvelope`, `Producer`, `GitTarget`). Scope is deliberately narrow: envelope shape
+The shared envelope contract, as a Pydantic model of the platform's event schema
+(`EventEnvelope`, `Producer`, `GitTarget`). Scope is deliberately narrow: envelope shape
 validation only — no topic-name helpers, no Kafka client wrapper, no serialization convenience
 functions. Each consuming repo owns its own producer/consumer code and imports this only for a
 consistent, validated envelope shape.
@@ -103,7 +103,7 @@ agentic-events @ git+https://github.com/jayakumard10/agentic-sdlc-eventbus.git@v
 ```
 
 This reuses the same HTTPS + fine-grained read-only PAT credential mechanism already required for
-clone-per-run (locked decision 3) — no separate package registry needed.
+clone-per-run — no separate package registry needed.
 
 **Running its tests locally:**
 
@@ -124,18 +124,18 @@ counts, retention, or compaction; every auto-created topic gets the cluster defa
 **[ASSUMPTION]** 3 partitions/topic and replication factor 1 are defensible only for local/dev —
 flagged again in the memory budget & production section below.
 
-**(b) Consumer-side pattern subscription** — locked decision 5 requires Repo 1's consumer to use
+**(b) Consumer-side pattern subscription** — `agentic-sdlc-control-plane`'s consumer uses
 `consumer.subscribe(pattern=...)` rather than naming topics explicitly, so it can react to
 `agentic-sdlc-mlops` and future services without a code change. Discovery latency is governed by
 the consumer's `metadata.max.age.ms`:
-- Default (300000 ms / 5 min): a topic auto-created by Repo 2 can take up to 5 minutes to appear
-  in Repo 1's subscription — unacceptable for drift-to-run latency.
-- Repo 1 must tune this down (e.g. 30000 ms / 30 s) to bound discovery latency to well under a
+- Default (300000 ms / 5 min): a topic auto-created by `agentic-sdlc-mlops` can take up to 5 minutes to appear
+  in `agentic-sdlc-control-plane`'s subscription — unacceptable for drift-to-run latency.
+- `agentic-sdlc-control-plane` must tune this down (e.g. 30000 ms / 30 s) to bound discovery latency to well under a
   minute. Trade-off: every consumer instance in the group issues a full metadata request that
   often, adding broker-side load that scales with `(number of consumers) / metadata.max.age.ms`.
   At 30s and a handful of consumers this is negligible; it stops being negligible in the
   hundreds-of-consumers range, which this platform is nowhere near.
-- This setting lives in Repo 1's consumer config, not here — noted here because it's the
+- This setting lives in `agentic-sdlc-control-plane`'s consumer config, not here — noted here because it's the
   direct consequence of this repo's auto-create default.
 
 **(e) What replaces auto-create at real-cluster scale**: explicit topic provisioning (e.g. a
@@ -158,7 +158,7 @@ here, as repos 1, 2, and 4 are built.
 
 Wired and verified 2026-07-26 (against `url-shortener-api`, the first consuming repo). Each repo's
 own `docker-compose.yml` does *not* redeclare this broker — they connect to it as an already-running
-external service, since locked decision 7 forbids a shared multi-repo compose file. This keeps
+external service. There is deliberately no shared multi-repo compose file, which keeps
 `docker compose up` in every repo independently runnable with no sibling checkout. The broker
 exposes **three listeners** because "how a client reconnects for produce/fetch" (the *advertised*
 address, not just the address it initially connects to) genuinely differs by caller position — one
@@ -201,7 +201,7 @@ docker run --rm --network eventbus apache/kafka:4.1.2 \
   /opt/kafka/bin/kafka-topics.sh --describe --topic url-shortener.request-telemetry.v1 \
   --bootstrap-server broker:19092   # expect PartitionCount: 3, ReplicationFactor: 1
 
-# Consumer-group lag (once a real consumer group exists in Repo 1)
+# Consumer-group lag (once a real consumer group exists in `agentic-sdlc-control-plane`)
 docker run --rm --network eventbus apache/kafka:4.1.2 \
   /opt/kafka/bin/kafka-consumer-groups.sh \
   --bootstrap-server broker:19092 --describe --group <consumer-group-name>
@@ -245,6 +245,6 @@ on every push/PR — the report above isn't a one-time manual check, it's contin
 
 ## Phase 2 note
 
-Nothing in this repo changes for Phase 2 (real ML model in Repo 2). The event bus is
+Nothing in this repo changes for Phase 2 (real ML model in `agentic-sdlc-mlops`). The event bus is
 schema-and-topic-convention driven, not payload-aware — a new topic or a v2 envelope field is a
-Repo 1/2/4 concern, not a broker reconfiguration here.
+`agentic-sdlc-control-plane`/2/4 concern, not a broker reconfiguration here.
