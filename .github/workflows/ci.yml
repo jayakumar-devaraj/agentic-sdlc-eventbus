@@ -1,10 +1,32 @@
 name: ci
 
+# WHY THERE IS NO `push: branches: [main]` TRIGGER.
+#
+# There was, and it doubled this repository's bill for nothing. Every `pull_request` run was
+# followed by a `push main` run of the same length, because merging is what produced the push.
+# GitHub runs pull-request checks against the MERGE RESULT rather than the branch tip, so the tree
+# that lands on `main` is the tree the PR just tested - re-testing it is paying twice for one
+# answer. The platform's Actions allowance ran out on 2026-08-30, and this was the largest single
+# line item across every repository that has a workflow.
+#
+# **The gap that leaves, stated rather than hidden:** the merge result is only the merged tree if
+# `main` has not moved between the check and the merge. Enable branch protection's *"Require
+# branches to be up to date before merging"* to close it properly. This platform merges one PR at
+# a time, so the window is already narrow, but a settings toggle is a better guarantee than a habit.
+#
+# `workflow_dispatch` is the escape hatch: run this on `main` by hand when that is actually wanted,
+# instead of on every merge forever.
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
+
+# One run per pull request. A second push to the same branch cancels the run the first one started
+# rather than paying for both to finish. The key falls back to `run_id` off a pull request, which
+# is unique per run, so a manual `workflow_dispatch` is never cancelled by the next one.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
 
 jobs:
   agentic-events-tests:
@@ -16,6 +38,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          # Every run installed this repository's dependencies cold, though they are pinned and
+          # identical between runs. Caching them is free minutes back.
+          cache: pip
+          cache-dependency-path: pyproject.toml
 
       - name: Install package with dev dependencies
         run: pip install -e ".[dev]"
@@ -35,6 +61,12 @@ jobs:
   compose-up-and-verify:
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # Serialised behind the tests purely to stop paying for a broker start-up when the tests have
+    # already failed. It costs the same minutes on a green run - the two jobs' times add either
+    # way - and saves all of them on a red one. The price is wall-clock on a passing run, which is
+    # the right trade while the allowance is the binding constraint. Both agentic-sdlc-mlops and
+    # agentic-sdlc-control-plane already gate their downstream jobs this way.
+    needs: agentic-events-tests
     steps:
       - uses: actions/checkout@v4
 
