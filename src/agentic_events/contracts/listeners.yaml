@@ -1,0 +1,74 @@
+# The broker's listener topology.
+#
+# Three advertised listeners exist because three CALLER POSITIONS exist. This is the
+# design record for ADR 0001, moved out of a comment in docker-compose.yml and into
+# something a test can read: tests/contract/test_compose_matches_listener_spec.py
+# asserts the compose file still says exactly what this file says.
+#
+# The bug this prevents is silent. A client that bootstraps successfully will still
+# fail every subsequent produce and fetch if it is handed a reconnect address it cannot
+# reach - bootstrap succeeding proves nothing. Any change here must state which caller
+# position it serves and be verified FROM that position.
+---
+schema_version: "1.0"
+
+# Fixed so KRaft cluster metadata stays valid across container restarts against the same
+# named volume. Generated once; regenerating it invalidates the existing log directory.
+cluster_id: GbUkriPcWUY1D0RM32nhAw
+
+listeners:
+  - name: PLAINTEXT
+    caller_position: internal-network
+    bind: broker:19092
+    advertised: broker:19092
+    security_protocol: PLAINTEXT
+    scope: local-dev-only
+    serves: >-
+      Containers on this repository's own 'eventbus' network, including any disposable
+      client container attached to it. Also the inter-broker listener.
+
+  - name: CONTROLLER
+    caller_position: intra-cluster
+    bind: broker:29093
+    # Never advertised. The KRaft controller quorum is internal to the cluster and is
+    # not a caller position any client occupies.
+    advertised: null
+    security_protocol: PLAINTEXT
+    scope: local-dev-only
+    serves: The KRaft controller quorum. Not reachable by, or intended for, any client.
+
+  - name: PLAINTEXT_HOST
+    caller_position: host-machine
+    bind: 0.0.0.0:9092
+    advertised: localhost:9092
+    security_protocol: PLAINTEXT
+    scope: local-dev-only
+    serves: >-
+      The Docker host itself - CLI tools and scripts run directly on the machine rather
+      than inside a container.
+
+  - name: DOCKER_INTERNAL
+    caller_position: foreign-container
+    bind: 0.0.0.0:9093
+    advertised: host.docker.internal:9093
+    security_protocol: PLAINTEXT
+    scope: local-dev-only
+    serves: >-
+      Containers belonging to a DIFFERENT compose project. PLAINTEXT_HOST cannot serve
+      them: it advertises 'localhost', which inside another container resolves to that
+      container itself rather than to this host. This listener exists because reusing
+      PLAINTEXT_HOST for cross-project access was the original design and it failed
+      exactly this way (ADR 0001).
+
+# Every listener above is PLAINTEXT with no authentication. That is correct for a
+# single-node broker on a developer machine and is recorded here as an explicit posture
+# rather than left as an unstated default. It is also why every entry carries
+# scope: local-dev-only - any non-local deployment needs SASL/TLS and a new spec, not a
+# port change.
+security_posture:
+  authentication: none
+  encryption: none
+  rationale: Single-node local development broker. Not reachable off the host.
+  non_local_requirement: >-
+    Any deployment outside a developer machine requires SASL_SSL listeners and a
+    superseding ADR. Changing 'scope' on a listener without that is a defect.

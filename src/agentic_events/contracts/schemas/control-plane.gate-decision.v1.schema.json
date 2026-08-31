@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jayakumar-devaraj/agentic-sdlc-eventbus/contracts/schemas/control-plane.gate-decision.v1.schema.json",
+  "title": "control-plane.gate-decision.v1 event body",
+  "description": "A human release-gate decision, relayed onto the bus. The status vocabulary below is exactly what the consumer accepts; anything else is rejected as unusable, so it is written down here rather than left to be discovered by a rejected message.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["metrics", "payload"],
+  "properties": {
+    "metrics": {
+      "description": "Carries nothing for this topic. A decision is not a measurement.",
+      "type": "object",
+      "additionalProperties": true
+    },
+    "payload": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Exactly one of 'decision' or 'status' must carry the verdict. The consumer reads decision first and falls back to status, so a message with neither has no usable verdict and is rejected.",
+      "anyOf": [
+        { "required": ["decision"] },
+        { "required": ["status"] }
+      ],
+      "properties": {
+        "decision": { "$ref": "#/$defs/verdict" },
+        "status": { "$ref": "#/$defs/verdict" },
+        "decided_by": {
+          "description": "An identity on the wire - typically a username. Distinct from the consumer's internal provenance field of the same name, which records only whether a human or a replayed fixture resolved the gate.",
+          "type": "string",
+          "minLength": 1
+        },
+        "override_guardrails": { "type": "boolean" },
+        "comment": { "type": "string" },
+        "clarified_requirement": {
+          "description": "Absent and null are not the same thing: the consumer only applies this key when it is actually supplied, because a present-but-null value would erase the current requirement.",
+          "type": ["string", "null"]
+        }
+      }
+    }
+  },
+  "$defs": {
+    "verdict": {
+      "description": "'approve'/'reject' are normalised by the consumer to 'approved'/'rejected'. Both spellings are on the wire and both are accepted.",
+      "enum": ["approve", "approved", "reject", "rejected", "edited"]
+    }
+  }
+}

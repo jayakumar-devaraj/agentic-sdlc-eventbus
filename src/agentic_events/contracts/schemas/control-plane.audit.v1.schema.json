@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jayakumar-devaraj/agentic-sdlc-eventbus/contracts/schemas/control-plane.audit.v1.schema.json",
+  "title": "control-plane.audit.v1 event body",
+  "description": "One append-only audit record, carried as payload so the audit stream keeps exactly the envelope shape every other topic uses rather than inventing a second contract for the one stream an auditor is most likely to read. The record's own shape is owned by the producing control plane, so this schema constrains that it is a non-empty object and stops there - claiming more here would be inventing a contract this repository does not own.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["metrics", "payload"],
+  "properties": {
+    "metrics": {
+      "description": "Always empty for this topic. An audit record is not a measurement.",
+      "type": "object",
+      "additionalProperties": true
+    },
+    "payload": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": true
+    }
+  }
+}

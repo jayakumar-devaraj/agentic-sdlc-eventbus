@@ -1,0 +1,89 @@
+# The topic register.
+#
+# This file is the register. It was a Markdown table in README.md, which meant nothing
+# could validate it, nothing could enforce it, and nothing could reconcile it against a
+# live broker. The README table is now generated from this file by
+# scripts/render_topic_table.py and CI fails if the two disagree.
+#
+# The broker runs with KAFKA_AUTO_CREATE_TOPICS_ENABLE=true, so a typo'd topic name
+# silently becomes real infrastructure. That is a deliberate plug-and-play choice; this
+# register is what keeps it from also being an undocumented one.
+#
+# Domain-agnostic by rule: a topic may NAME a tenant service, but nothing here may
+# describe that service's internals.
+---
+schema_version: "1.0"
+
+convention:
+  pattern: "{service}.{event-type}.v{n}"
+  # Separator is '.' and words inside a segment join with '-'. Never '_': Kafka warns
+  # when topic names mix '.' and '_' in the same position, because both collapse to the
+  # same JMX metric name internally, so 'foo.bar' and 'foo_bar' would collide. Confirmed
+  # during broker testing, not assumed.
+  regex: '^[a-z0-9]+(-[a-z0-9]+)*\.[a-z0-9]+(-[a-z0-9]+)*\.v[1-9][0-9]*$'
+  notes: >-
+    No tenant segment: the platform is single-tenant today. The convention is locked
+    once any producer ships against it, because changing it means touching every repo's
+    producer and consumer configuration, not just this one.
+
+topics:
+  - name: url-shortener.request-telemetry.v1
+    producer: url-shortener-api
+    consumers: [agentic-sdlc-mlops]
+    carries: envelope
+    event_schema: schemas/url-shortener.request-telemetry.v1.schema.json
+    summary: >-
+      Per-request latency and status telemetry from the tenant service under
+      observation. Every request is published, not only successful ones, because the
+      drift metrics computed downstream need coverage of failed and rejected requests.
+
+  - name: mlops.drift-detected.v1
+    producer: agentic-sdlc-mlops
+    consumers: [agentic-sdlc-control-plane]
+    carries: envelope
+    event_schema: schemas/mlops.drift-detected.v1.schema.json
+    summary: >-
+      A drift episode was observed against the telemetry baseline. correlation_id
+      identifies the episode rather than the detection, so repeated detections of one
+      unresolved condition do not each start a governed run.
+
+  - name: control-plane.gate-decision.v1
+    producer: agentic-sdlc-control-plane
+    consumers: [agentic-sdlc-control-plane]
+    carries: envelope
+    event_schema: schemas/control-plane.gate-decision.v1.schema.json
+    summary: >-
+      A human release-gate decision, relayed onto the bus by the control plane's
+      decision API. Produced on behalf of a human operator, never autonomously.
+
+  - name: control-plane.run-outcome.v1
+    producer: agentic-sdlc-control-plane
+    consumers: [agentic-sdlc-mlops]
+    carries: envelope
+    event_schema: schemas/control-plane.run-outcome.v1.schema.json
+    summary: Terminal outcome of an orchestrated remediation run, keyed by run id.
+
+  - name: control-plane.audit.v1
+    producer: agentic-sdlc-control-plane
+    consumers: []
+    carries: envelope
+    event_schema: schemas/control-plane.audit.v1.schema.json
+    summary: >-
+      Append-only audit trail of control-plane decisions. No bus consumer is registered
+      today; an empty consumer list is a deliberate state, not a missing entry.
+
+  # Added 2026-08-31. This topic has been produced to since the control plane grew a
+  # dead-letter path, and was absent from the register the whole time - found by
+  # auditing the actual producers rather than by reading the register, which is the
+  # failure mode a register that nothing validates is supposed to prevent.
+  - name: control-plane.dlq.v1
+    producer: agentic-sdlc-control-plane
+    consumers: []
+    # Raw, not envelope: a message reaches this topic precisely because it failed the
+    # envelope contract, so wrapping the report in that same contract would destroy the
+    # evidence. The registered schema therefore describes the whole message.
+    carries: raw
+    event_schema: schemas/control-plane.dlq.v1.schema.json
+    summary: >-
+      Messages that could not be processed, with the reason they failed and the
+      undecodable original preserved verbatim. Drained by a human, not by a service.

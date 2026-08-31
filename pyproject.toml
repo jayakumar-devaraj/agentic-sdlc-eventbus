@@ -22,6 +22,7 @@ dev = [
     "ruff==0.16.5",
     "mypy==2.3.1",
     "types-pyyaml==6.0.12.20240917",
+    "types-jsonschema==4.23.0.20240813",
 ]
 # Only the integration/ and evaluation/ tiers need a Kafka client. Keeping it out of
 # `dev` means the unit and contract tiers - the ones that run on every pull request -
@@ -41,7 +42,17 @@ include = ["agentic_events*"]
 [tool.setuptools.package-data]
 # PEP 561. Without this marker the package's annotations are invisible to downstream
 # type checkers, which silently degrade every `EventEnvelope` to `Any`.
-agentic_events = ["py.typed"]
+#
+# The contracts ship inside the package rather than sitting at the repository root.
+# A contract artifact that is not in the wheel cannot be read by the three repositories
+# that install this package, which is the entire reason it exists. See docs/adr/0002.
+agentic_events = [
+    "py.typed",
+    "contracts/*.yaml",
+    "contracts/*.json",
+    "contracts/schemas/*.json",
+    "contracts/envelope/*.json",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

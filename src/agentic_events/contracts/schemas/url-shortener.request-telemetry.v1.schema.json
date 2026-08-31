@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jayakumar-devaraj/agentic-sdlc-eventbus/contracts/schemas/url-shortener.request-telemetry.v1.schema.json",
+  "title": "url-shortener.request-telemetry.v1 event body",
+  "description": "The open parts of the envelope for this topic: metrics and payload. Derived from the producer as it actually emits, not from intent. Generic per-request HTTP telemetry - deliberately says nothing about what any route of the producing service does.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["metrics", "payload"],
+  "properties": {
+    "metrics": {
+      "type": "object",
+      "required": ["status_code", "latency_ms", "is_404", "is_rate_limited"],
+      "additionalProperties": true,
+      "properties": {
+        "status_code": { "type": "integer", "minimum": 100, "maximum": 599 },
+        "latency_ms": { "type": "number", "minimum": 0 },
+        "is_404": {
+          "description": "Pre-computed by the producer rather than derived by each consumer, so every consumer counts the same thing.",
+          "type": "boolean"
+        },
+        "is_rate_limited": { "type": "boolean" }
+      }
+    },
+    "payload": {
+      "type": "object",
+      "required": ["method", "path", "code"],
+      "additionalProperties": true,
+      "properties": {
+        "method": { "type": "string", "minLength": 1 },
+        "path": { "type": "string", "minLength": 1 },
+        "code": {
+          "description": "Null is correct and common: a request that never resolved to a short code has none.",
+          "type": ["string", "null"]
+        }
+      }
+    }
+  }
+}

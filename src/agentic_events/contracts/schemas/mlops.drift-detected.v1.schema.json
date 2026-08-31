@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jayakumar-devaraj/agentic-sdlc-eventbus/contracts/schemas/mlops.drift-detected.v1.schema.json",
+  "title": "mlops.drift-detected.v1 event body",
+  "description": "Note where the contract actually lives: the consuming control plane reads metric_name, reference_value, current_value, relative_delta_pct and threshold_pct out of METRICS, not payload. A schema that only covered payload would leave the load-bearing half unvalidated.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["metrics", "payload"],
+  "properties": {
+    "metrics": {
+      "type": "object",
+      "required": ["metric_name", "reference_value", "current_value", "relative_delta_pct", "threshold_pct"],
+      "additionalProperties": true,
+      "properties": {
+        "metric_name": { "type": "string", "minLength": 1 },
+        "reference_value": {
+          "description": "Nullable: a baseline window with no observations has no reference value, and the consumer renders that case rather than failing on it.",
+          "type": ["number", "null"]
+        },
+        "current_value": { "type": ["number", "null"] },
+        "relative_delta_pct": {
+          "description": "Nullable for the same reason as reference_value: with no baseline there is no relative delta to compute.",
+          "type": ["number", "null"]
+        },
+        "threshold_pct": { "type": "number" }
+      }
+    },
+    "payload": {
+      "type": "object",
+      "required": ["reference_window", "current_window", "sample_size"],
+      "additionalProperties": true,
+      "properties": {
+        "reference_window": { "$ref": "#/$defs/window" },
+        "current_window": { "$ref": "#/$defs/window" },
+        "sample_size": { "type": "integer", "minimum": 0 }
+      }
+    }
+  },
+  "$defs": {
+    "window": {
+      "description": "Half-open observation window, ISO-8601. Emitted as strings by the producer, so validated as strings here rather than as a richer type the wire does not carry.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start", "end"],
+      "properties": {
+        "start": { "type": "string", "format": "date-time" },
+        "end": { "type": "string", "format": "date-time" }
+      }
+    }
+  }
+}
