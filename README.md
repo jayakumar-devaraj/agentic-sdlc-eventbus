@@ -308,9 +308,16 @@ docker compose up -d && pytest -m "integration or evaluation" -q
 
 There is deliberately **no `push: branches: [main]` trigger.** GitHub runs pull-request checks
 against the merge result, so re-testing the merged tree pays twice for one answer. The gap that
-leaves — the merge result is only the merged tree if `main` has not moved — is closed by branch
-protection's *"Require branches to be up to date before merging"*, which is a better guarantee than
-a habit. `workflow_dispatch` is the escape hatch for running on `main` deliberately.
+leaves — the merge result is only the merged tree if `main` has not moved — is closed by *"Require
+branches to be up to date before merging"*, which is **on**: the `main` ruleset carries
+`strict_required_status_checks_policy: true`. `workflow_dispatch` is the escape hatch for running
+on `main` deliberately.
+
+Five checks are required to merge — the ones that run on every pull request. `contract-compat.yml`
+is deliberately not among them: it is path-filtered, so on a docs-only change it never reports, and
+requiring a check that sometimes never runs blocks the merge forever. **Renaming a job in
+`ci.yml` breaks this**, because required checks match a job's display name rather than its key; the
+ruleset must be updated in the same change.
 
 Integration and evaluation run nightly rather than per-PR because they start a broker and pull
 client images, and the platform's Actions allowance is a binding constraint. They are also
