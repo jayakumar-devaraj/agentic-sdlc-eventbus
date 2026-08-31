@@ -8,12 +8,12 @@ version = "0.1.0"
 description = "Shared event envelope contract and topic registry for the agentic-sdlc-* platform repos"
 requires-python = ">=3.12"
 dependencies = [
-    "pydantic==2.10.4",
+    "pydantic==2.13.5",
     # The declarative contract layer (contracts/*.yaml) is read at runtime by consumers
     # querying the register, so its parser and validator are runtime dependencies rather
     # than dev ones. Loading is lazy; these are only imported on first registry use.
-    "pyyaml==6.0.2",
-    "jsonschema==4.23.0",
+    "pyyaml==6.0.3",
+    "jsonschema==4.26.0",
 ]
 
 [project.optional-dependencies]
@@ -33,7 +33,7 @@ dev = [
 # `dev` means the unit and contract tiers - the ones that run on every pull request -
 # install nothing that talks to a broker.
 broker = [
-    "confluent-kafka==2.6.1",
+    "confluent-kafka==2.15.0",
 ]
 
 # src/ layout, deliberately. With the package at the repository root, `pytest` imported
