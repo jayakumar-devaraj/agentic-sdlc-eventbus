@@ -26,6 +26,40 @@ CONTRACTS = REPO_ROOT / "src" / "agentic_events" / "contracts"
 if str(REPO_ROOT / "scripts") not in sys.path:
     sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
+TIERS = ("unit", "contract", "integration", "evaluation")
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Give every test the tier marker for the directory it lives in, and refuse strays.
+
+    CI selects by marker (``-m "unit or contract"``), so a test with no tier marker is
+    collected, reported as passing, and never actually run by the gate. ``--strict-markers``
+    does not catch that - it catches a *misspelled* marker, not a *missing* one.
+
+    This was not hypothetical. ``tests/unit/test_envelope.py`` was moved rather than
+    written and carried no marker, so all 18 envelope tests were silently deselected and
+    coverage of ``envelope.py`` sat at 69% while the run reported "99 passed".
+
+    Deriving the marker from the directory means a new file cannot forget one, and the
+    hard failure below means a test file dropped outside the four tiers is a collection
+    error rather than a test that quietly never runs.
+    """
+    strays = []
+    for item in items:
+        tier = next((part for part in item.path.parts if part in TIERS), None)
+        if tier is None:
+            strays.append(str(item.path.relative_to(REPO_ROOT)))
+            continue
+        item.add_marker(getattr(pytest.mark, tier))
+
+    if strays:
+        raise pytest.UsageError(
+            "these test files are not in a tier directory, so the marker-filtered CI run "
+            f"would never execute them: {sorted(set(strays))}. "
+            f"Move each into tests/{{{','.join(TIERS)}}}/."
+        )
+
+
 # The host position by default, because that is where a developer runs pytest. CI
 # overrides it for the container positions.
 BOOTSTRAP = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
