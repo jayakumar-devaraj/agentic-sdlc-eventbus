@@ -75,10 +75,12 @@
       "$ref": "#/$defs/GitTarget"
     },
     "metrics": {
+      "additionalProperties": true,
       "title": "Metrics",
       "type": "object"
     },
     "payload": {
+      "additionalProperties": true,
       "title": "Payload",
       "type": "object"
     },
