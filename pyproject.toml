@@ -112,5 +112,8 @@ warn_unreachable = true
 show_error_codes = true
 
 [[tool.mypy.overrides]]
-module = ["confluent_kafka.*"]
+# Both are soft dependencies this package deliberately does not require. confluent-kafka
+# is only needed by the broker-backed test tiers; opentelemetry is soft-imported so that
+# installing this contract package never forces a tracing SDK on a consumer.
+module = ["confluent_kafka.*", "opentelemetry.*"]
 ignore_missing_imports = true
