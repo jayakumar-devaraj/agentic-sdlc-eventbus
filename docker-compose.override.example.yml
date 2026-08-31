@@ -1,0 +1,28 @@
+# Copy to `docker-compose.override.yml` for local changes you do not want to commit.
+# Compose merges that file automatically; it is gitignored, this example is not.
+#
+# It has to sit beside docker-compose.yml for the automatic merge to happen, which is
+# why it is at the repository root.
+#
+# What this is FOR: adapting the broker to your machine. What it is NOT for: changing
+# the listener topology. Each listener serves a specific caller position, the topology
+# is declared in contracts/listeners.yaml, and tests/contract/ asserts the two agree -
+# so an override that changes an advertised address does not just get missed by CI, it
+# silently reintroduces the ADR 0001 defect on your machine alone.
+
+services:
+  kafka:
+    # Raise if the broker is being killed under load; the committed 2g is sized for the
+    # platform's 8 GiB WSL2 allocation shared across five repositories.
+    # mem_limit: 3g
+
+    # Publish on different host ports when something else already holds 9092/9093.
+    # Changing the PORT here is safe; changing what the broker ADVERTISES is not - that
+    # belongs in contracts/listeners.yaml with an ADR, not here.
+    # ports:
+    #   - "19092:9092"
+    #   - "19093:9093"
+
+    # Quieter logs while debugging something else.
+    # environment:
+    #   KAFKA_LOG4J_ROOT_LOGLEVEL: WARN

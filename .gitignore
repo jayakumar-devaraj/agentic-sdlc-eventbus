@@ -5,6 +5,14 @@ Thumbs.db
 .venv/
 __pycache__/
 *.egg-info/
+
+# Local compose overrides. The committed .env.example and
+# docker-compose.override.example.yml are the templates; what an operator derives from
+# them is theirs. Both must sit beside docker-compose.yml for Compose to pick them up
+# automatically, which is why they are ignored here at the root rather than in a
+# subdirectory.
+.env
+docker-compose.override.yml
 # Left behind by `uv build` / `python -m build`. Neither is ever an input to anything
 # here, and building the wheel is part of verifying that the contracts actually ship -
 # which should be done often enough that it must not dirty the tree each time.

@@ -73,6 +73,18 @@ jobs:
         # installing one here would let a dependency on it creep in unnoticed.
         run: pip install -e ".[dev]"
 
+      - name: The lockfile matches pyproject.toml
+        # Direct dependencies are exact-pinned, but every transitive one floated until
+        # uv.lock existed, so a build was never reproducible. A lockfile that is allowed
+        # to drift is worse than none - it reads as a guarantee and is not one.
+        #
+        # This fails on a dependency bump that does not regenerate it, Dependabot's
+        # included. That is the same shape as the schema-staleness gate and the same
+        # answer: run the command named in the failure and commit the result.
+        run: |
+          pip install uv==0.11.19
+          uv lock --check
+
       - name: Lint
         run: ruff check .
 
