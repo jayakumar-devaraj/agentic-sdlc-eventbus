@@ -9,13 +9,31 @@ name: ci
 # answer. The platform's Actions allowance ran out on 2026-08-30, and this was the largest single
 # line item across every repository that has a workflow.
 #
-# **The gap that leaves, stated rather than hidden:** the merge result is only the merged tree if
-# `main` has not moved between the check and the merge. Enable branch protection's *"Require
-# branches to be up to date before merging"* to close it properly. This platform merges one PR at
-# a time, so the window is already narrow, but a settings toggle is a better guarantee than a habit.
+# **The gap that leaves, and how it is closed:** the merge result is only the merged tree if
+# `main` has not moved between the check and the merge. *"Require branches to be up to date before
+# merging"* closes it, and it is **on** - the `main` ruleset carries
+# `strict_required_status_checks_policy: true`, verified 2026-08-31 via
+# `gh api repos/{owner}/{repo}/rules/branches/main`. This comment previously told the reader to
+# enable it, which read as an outstanding gap long after it had been closed.
 #
 # `workflow_dispatch` is the escape hatch: run this on `main` by hand when that is actually wanted,
 # instead of on every merge forever.
+#
+# **Renaming a job here silently breaks that ruleset.** Required status checks match on a job's
+# display `name:`, not its key, so a rename leaves the ruleset waiting on a context nothing will
+# ever report and every pull request sits at BLOCKED with all checks green. That happened on
+# PR #8. The contexts the ruleset currently requires are the five that run on *every* pull
+# request:
+#
+#   lint, types, and the contract gates          (this file)
+#   broker starts and auto-creates               (this file)
+#   dependency audit and SBOM                    (security.yml)
+#   secret scan                                  (security.yml)
+#   no local machine paths in committed files    (security.yml)
+#
+# `contract-compat.yml`'s check is deliberately NOT required: it is path-filtered, so it never
+# reports on a docs-only pull request, and requiring a check that sometimes never runs recreates
+# exactly the same deadlock.
 on:
   pull_request:
     branches: [main]
