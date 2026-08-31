@@ -1,0 +1,156 @@
+{
+  "$defs": {
+    "GitTarget": {
+      "additionalProperties": false,
+      "description": "The repository, branch, and commit an event refers to.",
+      "properties": {
+        "branch": {
+          "title": "Branch",
+          "type": "string"
+        },
+        "commit_sha": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Commit Sha"
+        },
+        "repo_url": {
+          "title": "Repo Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "repo_url",
+        "branch"
+      ],
+      "title": "GitTarget",
+      "type": "object"
+    },
+    "Producer": {
+      "additionalProperties": false,
+      "description": "The service instance that emitted an event.",
+      "properties": {
+        "instance_id": {
+          "title": "Instance Id",
+          "type": "string"
+        },
+        "service": {
+          "title": "Service",
+          "type": "string"
+        }
+      },
+      "required": [
+        "service",
+        "instance_id"
+      ],
+      "title": "Producer",
+      "type": "object"
+    }
+  },
+  "$id": "https://github.com/jayakumar-devaraj/agentic-sdlc-eventbus/contracts/envelope/v1.0.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "The Universal Event Contract envelope shared by all agentic-sdlc-* repos.\n\nThe wire form of this model is exported to ``contracts/envelope/v1.0.schema.json``\nand that file, not this class, is the artifact downstream repositories diff against.\n\n``metrics`` and ``payload`` are intentionally open: only the envelope shape is\nvalidated here, never a specific ``event_type``'s business payload. Those are\nregistered separately under ``contracts/schemas/`` and validated on demand through\n:func:`agentic_events.registry.validate_event`.\n\nTwo identifiers, deliberately, because they have different lifetimes:\n\n* ``event_id`` is per message. A redelivery of one event reuses it.\n* ``correlation_id`` is per *episode* - one drift condition, one governed run. Two\n  detections of the same unresolved condition share it, which is what stops one\n  regression from starting a run a minute.\n* ``traceparent`` is per request path, and is neither of the above.\n\nThis class enforces structure. Where it cannot enforce meaning it warns rather than\npassing silently - see :func:`contract_violations`.",
+  "properties": {
+    "correlation_id": {
+      "title": "Correlation Id",
+      "type": "string"
+    },
+    "event_id": {
+      "format": "uuid",
+      "title": "Event Id",
+      "type": "string"
+    },
+    "event_type": {
+      "title": "Event Type",
+      "type": "string"
+    },
+    "git_target": {
+      "$ref": "#/$defs/GitTarget"
+    },
+    "metrics": {
+      "title": "Metrics",
+      "type": "object"
+    },
+    "payload": {
+      "title": "Payload",
+      "type": "object"
+    },
+    "producer": {
+      "$ref": "#/$defs/Producer"
+    },
+    "scenario_type": {
+      "enum": [
+        "greenfield",
+        "brownfield",
+        "ambiguous"
+      ],
+      "title": "Scenario Type",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "service": {
+      "title": "Service",
+      "type": "string"
+    },
+    "tenant": {
+      "default": "default",
+      "title": "Tenant",
+      "type": "string"
+    },
+    "timestamp": {
+      "format": "date-time",
+      "title": "Timestamp",
+      "type": "string"
+    },
+    "traceparent": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "W3C trace context. None when the producer has no tracing SDK installed or no span is active.",
+      "title": "Traceparent"
+    },
+    "tracestate": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "W3C tracestate, carried verbatim. Vendor-specific and not interpreted here.",
+      "title": "Tracestate"
+    }
+  },
+  "required": [
+    "event_id",
+    "correlation_id",
+    "service",
+    "event_type",
+    "timestamp",
+    "producer",
+    "git_target",
+    "scenario_type"
+  ],
+  "title": "EventEnvelope",
+  "type": "object"
+}

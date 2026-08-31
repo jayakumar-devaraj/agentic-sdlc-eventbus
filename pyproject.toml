@@ -9,8 +9,9 @@ description = "Shared event envelope contract and topic registry for the agentic
 requires-python = ">=3.12"
 dependencies = [
     "pydantic==2.10.4",
-    # The declarative contract layer (contracts/*.yaml) is loaded and validated at
-    # import time, so its parser and validator are runtime dependencies, not dev ones.
+    # The declarative contract layer (contracts/*.yaml) is read at runtime by consumers
+    # querying the register, so its parser and validator are runtime dependencies rather
+    # than dev ones. Loading is lazy; these are only imported on first registry use.
     "pyyaml==6.0.2",
     "jsonschema==4.23.0",
 ]
@@ -106,7 +107,7 @@ convention = "google"
 
 [tool.mypy]
 python_version = "3.12"
-files = ["src"]
+files = ["src", "scripts"]
 strict = true
 warn_unreachable = true
 show_error_codes = true
