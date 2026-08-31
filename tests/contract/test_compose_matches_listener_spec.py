@@ -12,6 +12,7 @@ listener change that contradicts the spec fails in CI rather than in another rep
 container three days later.
 """
 
+import re
 from pathlib import Path
 
 import pytest
@@ -24,9 +25,24 @@ pytestmark = pytest.mark.contract
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
+_INTERPOLATED = re.compile(r"^\$\{[A-Z_][A-Z0-9_]*:-(?P<default>.*)\}$")
+
+
 def _broker_environment() -> dict[str, str]:
+    """Read the broker's environment, resolving `${VAR:-default}` to its default.
+
+    The committed default is what ships and what every fresh `docker compose up` uses,
+    so it is the value these tests hold against the spec. An operator exporting a
+    different value locally is doing so deliberately and is not this repository's
+    concern; a wrong default would be everyone's.
+    """
     compose = yaml.safe_load((REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
-    return {k: str(v) for k, v in compose["services"]["kafka"]["environment"].items()}
+    resolved = {}
+    for key, value in compose["services"]["kafka"]["environment"].items():
+        text = str(value)
+        match = _INTERPOLATED.match(text)
+        resolved[key] = match.group("default") if match else text
+    return resolved
 
 
 def _parse_listener_list(value: str) -> dict[str, str]:

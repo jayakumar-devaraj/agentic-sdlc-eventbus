@@ -38,9 +38,15 @@ services:
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
       KAFKA_NUM_PARTITIONS: 3
       KAFKA_LOG_DIRS: /mnt/shared/config/kraft-combined-logs
-      # Fixed so cluster metadata stays valid across container restarts against
-      # the same named volume. Generated once; do not regenerate for this repo.
-      CLUSTER_ID: GbUkriPcWUY1D0RM32nhAw
+      # Fixed so cluster metadata stays valid across container restarts against the same
+      # named volume. Generated once; do not regenerate for this repo.
+      #
+      # Overridable through the environment, with the committed value as the default, so
+      # nothing here has to be edited to run a second cluster side by side. It is not a
+      # secret - a KRaft cluster id is public by nature - and it is written down rather
+      # than hidden precisely so the default is auditable. See .env.example.
+      # tests/contract/ asserts this DEFAULT matches contracts/listeners.yaml.
+      CLUSTER_ID: ${CLUSTER_ID:-GbUkriPcWUY1D0RM32nhAw}
     volumes:
       - kafka-data:/mnt/shared/config
     networks:
