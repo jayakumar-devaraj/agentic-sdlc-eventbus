@@ -39,16 +39,29 @@ jobs:
         # Every extra, deliberately: `broker` pulls confluent-kafka, which is the largest thing
         # this repository can put into a consumer's environment and the one least likely to be
         # audited elsewhere.
+        #
+        # pip-audit emits CycloneDX itself, so it produces the SBOM too. An earlier version of
+        # this job also installed cyclonedx-bom and could never resolve: pip-audit 2.7.3 requires
+        # cyclonedx-python-lib <8 and cyclonedx-bom 5.1.1 requires >=8. One tool, no conflict.
         run: |
           pip install -e ".[dev,broker]"
-          pip install pip-audit==2.7.3 cyclonedx-bom==5.1.1
+          pip install pip-audit==2.7.3
 
       - name: Audit installed dependencies
-        # Fails the build. An advisory that only prints is a notification, not a gate.
-        run: pip-audit --strict --desc
+        # Fails the build on a vulnerability. An advisory that only prints is a notification,
+        # not a gate.
+        #
+        # --skip-editable, and no --strict: this repository installs itself editable, and
+        # agentic-events is not on PyPI to be looked up. --strict turns every skipped
+        # distribution into an error, which would fail this job permanently for a reason that
+        # has nothing to do with security. Vulnerabilities still fail the build without it -
+        # --strict governs unauditable packages, not findings.
+        run: pip-audit --desc --skip-editable
 
       - name: Generate SBOM
-        run: cyclonedx-py environment --output-format JSON --outfile sbom.json
+        # Runs after the audit, so on a green build this is a straight re-serialisation of a
+        # tree already known to be clean.
+        run: pip-audit --skip-editable --format cyclonedx-json --output sbom.json
 
       - name: Upload SBOM
         uses: actions/upload-artifact@v4

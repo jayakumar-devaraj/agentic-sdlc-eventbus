@@ -18,7 +18,11 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "pytest==8.3.4",
+    # 9.x, not 8.3.4: pytest through 9.0.2 has PYSEC-2026-1845, a local privilege-escalation
+    # and denial-of-service via the predictable /tmp/pytest-of-{user} directory pattern on
+    # UNIX. Dev-only and never shipped to a consumer, but this repository's own security
+    # workflow fails the build on it, which is the workflow behaving correctly.
+    "pytest==9.1.1",
     "pytest-cov==7.1.0",
     "ruff==0.16.5",
     "mypy==2.3.1",
