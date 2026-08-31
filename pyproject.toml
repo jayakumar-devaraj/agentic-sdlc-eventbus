@@ -99,7 +99,13 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 # Tests document themselves through their names; a docstring on every assertion helper
 # is noise rather than information.
-"tests/**" = ["D100", "D101", "D102", "D103", "D104", "ANN001", "ANN002", "ANN003", "ANN201", "ANN202"]
+"tests/**" = [
+    "D100", "D101", "D102", "D103", "D104",
+    "ANN001", "ANN002", "ANN003", "ANN201", "ANN202",
+    # Kafka client objects have no useful public type to annotate against, and the
+    # fixtures that build them are plumbing rather than contract.
+    "ANN401",
+]
 "scripts/**" = ["D100"]
 
 [tool.ruff.lint.pydocstyle]
