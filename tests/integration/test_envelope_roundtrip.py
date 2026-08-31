@@ -14,6 +14,8 @@ consumer.
 from __future__ import annotations
 
 import json
+import threading
+import time
 import uuid
 from datetime import UTC, datetime
 
@@ -27,6 +29,11 @@ from agentic_events.telemetry import format_traceparent
 pytestmark = pytest.mark.integration
 
 TEST_TOPIC = "eventbus.test-roundtrip.v1"
+
+# Wall-clock bounds. Generous, because they exist to stop a hang rather than to measure
+# anything: a broker that has not assigned partitions in this long is not slow, it is broken.
+ASSIGNMENT_TIMEOUT_S = 30.0
+READ_TIMEOUT_S = 30.0
 
 
 def _envelope(**overrides: object) -> EventEnvelope:
@@ -56,27 +63,65 @@ def _envelope(**overrides: object) -> EventEnvelope:
     return EventEnvelope(**kwargs)  # type: ignore[arg-type]
 
 
+def _subscribe_for_new_messages(consumer_factory, group_suffix: str):
+    """Return a consumer positioned at the end of the topic, ready for what comes next.
+
+    Reading from ``earliest`` does not work here, and the way it fails is worth writing
+    down. A fresh consumer group with ``auto.offset.reset=earliest`` starts at offset
+    zero, so every poll returns an *older* message first. Against a topic that keeps its
+    history that is a race the test loses more of every day: it drains backlog until its
+    poll budget runs out and then reports that the envelope never came back.
+
+    It stayed green in CI the whole time, because CI starts a fresh broker per run and
+    the topic is empty. It only rots against a long-lived local broker - green remotely,
+    failing locally, which is the direction that erodes trust in the suite fastest.
+
+    So: start at ``latest``, and block until the partitions are actually assigned before
+    returning. The assignment wait is what the old ``earliest`` was working around - with
+    no assignment, a message published immediately after ``subscribe()`` lands before the
+    consumer is positioned and is never seen.
+    """
+    assigned = threading.Event()
+    consumer = consumer_factory(f"roundtrip-{group_suffix}", **{"auto.offset.reset": "latest"})
+    consumer.subscribe([TEST_TOPIC], on_assign=lambda _c, _p: assigned.set())
+
+    deadline = time.monotonic() + ASSIGNMENT_TIMEOUT_S
+    while not assigned.is_set() and time.monotonic() < deadline:
+        consumer.poll(timeout=0.5)
+    if not assigned.is_set():
+        pytest.fail(
+            f"consumer never received a partition assignment for {TEST_TOPIC} within "
+            f"{ASSIGNMENT_TIMEOUT_S}s; anything published now would be missed"
+        )
+    return consumer
+
+
+def _read_back(consumer, key: str) -> str:
+    """Return the value of the next message carrying ``key``, or fail.
+
+    Bounded by wall clock rather than by a poll count. A count is only a timeout if you
+    assume every poll returns nothing, and that assumption is exactly what broke here.
+    """
+    deadline = time.monotonic() + READ_TIMEOUT_S
+    while time.monotonic() < deadline:
+        message = consumer.poll(timeout=1.0)
+        if message is None:
+            continue
+        assert message.error() is None, message.error()
+        if message.key() == key.encode():
+            return message.value().decode("utf-8")
+    pytest.fail(f"no message keyed {key!r} came back off {TEST_TOPIC} in {READ_TIMEOUT_S}s")
+
+
 def _publish_and_read_back(producer, consumer_factory, envelope: EventEnvelope) -> str:
     """Publish one envelope and return the raw value read back off the broker."""
-    consumer = consumer_factory(f"roundtrip-{uuid.uuid4().hex[:8]}")
-    consumer.subscribe([TEST_TOPIC])
-    # Join the group before publishing. Subscribing after the send would race the
-    # earliest-offset reset and read nothing on a topic that already has history.
-    consumer.poll(timeout=5.0)
+    consumer = _subscribe_for_new_messages(consumer_factory, uuid.uuid4().hex[:8])
 
     producer.produce(TEST_TOPIC, key=envelope.correlation_id, value=envelope.model_dump_json())
     remaining = producer.flush(timeout=15.0)
     assert remaining == 0, f"{remaining} message(s) never left the producer queue"
 
-    deadline_polls = 30
-    for _ in range(deadline_polls):
-        message = consumer.poll(timeout=1.0)
-        if message is None:
-            continue
-        assert message.error() is None, message.error()
-        if message.key() == envelope.correlation_id.encode():
-            return message.value().decode("utf-8")
-    pytest.fail(f"published envelope never came back off {TEST_TOPIC}")
+    return _read_back(consumer, envelope.correlation_id)
 
 
 def test_an_envelope_survives_the_wire_unchanged(producer, consumer_factory, broker_metadata):
@@ -130,19 +175,12 @@ def test_a_malformed_message_is_rejected_by_the_contract_not_silently_accepted(
 ):
     # The broker will carry anything. Being the thing that refuses it is the envelope's
     # job, and this proves the refusal happens on a real message off a real topic.
-    consumer = consumer_factory(f"roundtrip-bad-{uuid.uuid4().hex[:8]}")
-    consumer.subscribe([TEST_TOPIC])
-    consumer.poll(timeout=5.0)
+    consumer = _subscribe_for_new_messages(consumer_factory, f"bad-{uuid.uuid4().hex[:8]}")
 
     key = f"malformed-{uuid.uuid4().hex[:8]}"
     producer.produce(TEST_TOPIC, key=key, value=json.dumps({"not": "an envelope"}))
     assert producer.flush(timeout=15.0) == 0
 
-    for _ in range(30):
-        message = consumer.poll(timeout=1.0)
-        if message is None or message.key() != key.encode():
-            continue
-        with pytest.raises(Exception, match="validation error"):
-            EventEnvelope.model_validate_json(message.value().decode("utf-8"))
-        return
-    pytest.fail("the malformed message never came back")
+    raw = _read_back(consumer, key)
+    with pytest.raises(Exception, match="validation error"):
+        EventEnvelope.model_validate_json(raw)
