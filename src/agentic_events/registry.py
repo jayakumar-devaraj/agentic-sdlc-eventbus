@@ -134,8 +134,7 @@ def _validated(document: dict[str, Any], meta_schema_name: str, source: str) -> 
     errors = sorted(validator.iter_errors(document), key=lambda e: list(e.absolute_path))
     if errors:
         detail = "; ".join(
-            f"{'/'.join(str(p) for p in e.absolute_path) or '<root>'}: {e.message}"
-            for e in errors
+            f"{'/'.join(str(p) for p in e.absolute_path) or '<root>'}: {e.message}" for e in errors
         )
         raise RegistryError(f"{source} does not satisfy {meta_schema_name}: {detail}")
     return document

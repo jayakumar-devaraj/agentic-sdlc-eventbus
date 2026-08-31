@@ -36,13 +36,20 @@ because a generic agent will say the opposite.
 claude --agent qa -p "In under 40 words: what do you say about this repo's 100% coverage number?"
 ```
 
-Verified 2026-08-01, this returns:
+Verified 2026-08-01, this returned:
 
 > 100% covers 31 statements in a Pydantic envelope — it proves the schema rejects invalid input,
 > nothing more. The real risk lives in the seam CI can't unit-test: cross-container reconnects,
 > broker admin ops, topic behavior — covered by the functional verification report instead.
 
 If instead you get congratulated on full coverage, the agent did not load.
+
+**That capture is from before the contract registry landed on 2026-08-31, and the statement count
+in it is now wrong — the package is 244 statements, not 31.** It is left as recorded rather than
+edited to match, because it is a transcript of a run that happened; rewriting it to look current
+would make it a claim about a run that did not. Expect today's answer to cite 244 and to mention
+the four test tiers. The part that matters for the binding check is unchanged: the agent should
+tell you the number is weak, not congratulate you on it.
 
 ## Which agent for which task
 

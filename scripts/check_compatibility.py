@@ -104,9 +104,7 @@ def _compare_property(where: str, name: str, old: dict[str, Any], new: dict[str,
                 f"Producers still emitting them will be rejected."
             )
     elif old_members is None and new_members is not None:
-        problems.append(
-            f"{where}.{name}: became a closed value set. Values outside it now fail."
-        )
+        problems.append(f"{where}.{name}: became a closed value set. Values outside it now fail.")
 
     return problems
 

@@ -11,6 +11,7 @@ visible across it.
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import sys
 from collections.abc import Callable, Iterator
@@ -30,29 +31,43 @@ if str(REPO_ROOT / "scripts") not in sys.path:
 BOOTSTRAP = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
 BROKER_TIMEOUT_S = 10.0
 
+# Set by the workflow that starts a broker before running these tiers. There, an
+# unreachable broker means the run proved nothing while reporting green, which is worse
+# than failing - so it fails. On a laptop with nothing started, skipping is correct.
+REQUIRE_BROKER = os.environ.get("EVENTBUS_REQUIRE_BROKER") == "1"
+
+
+def _no_broker(reason: str) -> None:
+    """Fail where a broker was promised, skip where it was merely optional."""
+    if REQUIRE_BROKER:
+        pytest.fail(f"EVENTBUS_REQUIRE_BROKER=1 but {reason}")
+    pytest.skip(reason)
+
 
 @pytest.fixture(scope="session")
 def broker_metadata() -> Any:
     """Cluster metadata, or skip the tier when no broker is reachable.
 
-    Skipped rather than failed: the unit and contract tiers must run cleanly on a laptop
-    with nothing started. CI decides separately whether a skip is acceptable - the
-    workflow that owns these tiers starts a broker first and treats a skip as a failure.
+    Skipped rather than failed by default: the unit and contract tiers must run cleanly
+    on a laptop with nothing started. Set ``EVENTBUS_REQUIRE_BROKER=1`` to turn a skip
+    into a failure, which is what the nightly workflow does after starting one.
     """
-    pytest.importorskip("confluent_kafka", reason="install with: pip install -e '.[broker]'")
+    if not importlib.util.find_spec("confluent_kafka"):
+        _no_broker("confluent-kafka is not installed; install with: pip install -e '.[broker]'")
     from confluent_kafka.admin import AdminClient
 
     admin = AdminClient({"bootstrap.servers": BOOTSTRAP, "socket.timeout.ms": 5000})
     try:
         return admin.list_topics(timeout=BROKER_TIMEOUT_S)
     except Exception as exc:
-        pytest.skip(f"no broker reachable at {BOOTSTRAP}: {exc}")
+        _no_broker(f"no broker reachable at {BOOTSTRAP}: {exc}")
 
 
 @pytest.fixture
 def producer() -> Any:
     """A producer bound to the configured listener."""
-    pytest.importorskip("confluent_kafka")
+    if not importlib.util.find_spec("confluent_kafka"):
+        _no_broker("confluent-kafka is not installed")
     from confluent_kafka import Producer
 
     return Producer(
@@ -71,7 +86,8 @@ def producer() -> Any:
 @pytest.fixture
 def consumer_factory() -> Iterator[Callable[..., Any]]:
     """Build consumers that are always closed, even when a test fails."""
-    pytest.importorskip("confluent_kafka")
+    if not importlib.util.find_spec("confluent_kafka"):
+        _no_broker("confluent-kafka is not installed")
     from confluent_kafka import Consumer
 
     created: list[Any] = []

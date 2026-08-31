@@ -68,9 +68,7 @@ def _api_versions_from(network: str | None, bootstrap: str) -> subprocess.Comple
         "--bootstrap-server",
         bootstrap,
     ]
-    return subprocess.run(
-        command, capture_output=True, timeout=DOCKER_TIMEOUT_S, check=False
-    )
+    return subprocess.run(command, capture_output=True, timeout=DOCKER_TIMEOUT_S, check=False)
 
 
 # --- position 1: the host machine ----------------------------------------------------

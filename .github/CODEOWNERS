@@ -1,0 +1,13 @@
+# Everything, by default.
+*                                   @jayakumar-devaraj
+
+# The published contract. A change to any of these reaches agentic-sdlc-control-plane,
+# agentic-sdlc-mlops, and url-shortener-api, so it is called out separately rather than left
+# to the catch-all above - the point is that the reviewer knows which kind of change this is.
+/src/agentic_events/contracts/      @jayakumar-devaraj
+/src/agentic_events/envelope.py     @jayakumar-devaraj
+/docker-compose.yml                 @jayakumar-devaraj
+
+# The rules everything else is judged against.
+/.specify/memory/constitution.md    @jayakumar-devaraj
+/docs/adr/                          @jayakumar-devaraj

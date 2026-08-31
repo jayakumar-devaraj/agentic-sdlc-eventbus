@@ -1,23 +1,29 @@
 # agentic-sdlc-eventbus
 
 Single-node Apache Kafka broker (KRaft mode, no ZooKeeper) that acts as the sole communication
-channel between the other three repos in the `agentic-sdlc-*` platform split, plus the
-`agentic_events` Python package: the shared event envelope contract that the other three repositories install
-as a dependency. This repo owns **no database** and runs **no producer/consumer processes of its
-own** — the broker is infrastructure-only, and `agentic_events` is a contract library, not an
-application. Actual Kafka client code (topic subscription, publishing, retries) lives in each
-consuming repo, not here.
+channel between the other repos in the `agentic-sdlc-*` platform split, plus `agentic_events`:
+the shared event contract those repositories install as a dependency.
 
-Repos `agentic-sdlc-control-plane`, `agentic-sdlc-mlops`, and `agentic-sdlc-eventbus` (this repo)
-are domain-agnostic platform backbone. Nothing in this repo may reference `url-shortener-api`
-concepts — if you find such a reference, it's a design defect.
+This repo owns **no database** and runs **no producer/consumer processes of its own** — the broker
+is infrastructure-only, and `agentic_events` is a contract library, not an application. Kafka
+client code (subscription, publishing, retries) lives in each consuming repo, not here.
+
+Repos carrying the `agentic-sdlc-*` prefix are domain-agnostic platform backbone. Nothing here may
+describe a tenant service's internals — naming one in the topic register is fine, describing how it
+works is not. If you find such a reference, it is a design defect.
+
+**Why any of this is shaped the way it is** lives in [`docs/adr/`](docs/adr/) and
+[`specs/`](specs/), never in this file. This file is how to run and use the repo.
+The non-negotiables are in [`.specify/memory/constitution.md`](.specify/memory/constitution.md).
 
 ## Tech stack
 
 - **Broker**: Apache Kafka (KRaft mode, no ZooKeeper) via `apache/kafka-native:4.1.2`
-- **Package**: Python 3.12, [Pydantic](https://docs.pydantic.dev/) 2.10.4 (`agentic_events` — the
-  shared event envelope contract)
-- **Testing**: pytest 8.3.4, pytest-cov 7.1.0
+- **Package**: Python 3.12, [Pydantic](https://docs.pydantic.dev/) 2.10.4, PyYAML 6.0.2,
+  jsonschema 4.23.0
+- **Quality gates**: ruff 0.16.5 (lint + format), mypy 2.3.1 (`--strict`), pytest 8.3.4,
+  pytest-cov 7.1.0
+- **Broker-backed tests**: confluent-kafka 2.6.1 (optional extra, not required to install the package)
 - **Infra**: Docker Compose, GitHub Actions CI
 
 ## Architecture
@@ -25,16 +31,109 @@ concepts — if you find such a reference, it's a design defect.
 ```mermaid
 flowchart LR
     subgraph eventbus_net["eventbus Docker network (this repo)"]
-        broker["kafka broker<br/>apache/kafka-native:4.1.2<br/>KRaft combined mode<br/>3 listeners"]
+        broker["kafka broker<br/>apache/kafka-native:4.1.2<br/>KRaft combined mode<br/>3 advertised listeners"]
         client["disposable apache/kafka:4.1.2<br/>client container<br/>(admin CLI only, not persistent)"]
         client -. "kafka-topics.sh, kafka-cluster.sh, etc.<br/>broker:19092 (PLAINTEXT)" .-> broker
     end
-    host["Docker Desktop host<br/>localhost:9092 (PLAINTEXT_HOST)"] --> broker
+    host["Docker host<br/>localhost:9092 (PLAINTEXT_HOST)"] --> broker
     other["control-plane / mlops / url-shortener<br/>own containers, separate compose projects<br/>host.docker.internal:9093 (DOCKER_INTERNAL)"] --> broker
 ```
 
-`apache/kafka-native` ships no CLI tooling (see Verification below), which is why admin operations
-run from a separate disposable container rather than `docker compose exec` into `broker` itself.
+`apache/kafka-native` ships no CLI tooling (see [Testing](#testing)), which is why admin operations
+run from a separate disposable container rather than `docker compose exec` into `broker`.
+
+### The contract layer
+
+Three things this repo publishes are declarative specs, shipped **inside** the package at
+`src/agentic_events/contracts/` so they travel with the wheel:
+
+| Spec | What it declares | Read by |
+|---|---|---|
+| `topics.yaml` | The topic register | `agentic_events.registry`, the README table below, broker reconciliation |
+| `listeners.yaml` | Listener topology and the caller position each serves | `tests/contract/`, which asserts `docker-compose.yml` matches it |
+| `schemas/*.schema.json` | Per-topic shape of the envelope's open `metrics`/`payload` pair | `registry.validate_event()` |
+| `envelope/v1.0.schema.json` | The envelope's wire contract, generated from the model | Downstream diffs, the CI compatibility gate |
+
+Each is meta-validated against its own JSON Schema. Nothing that belongs in a spec is a constant
+in Python or a value typed twice into the compose file.
+
+### Topic register
+
+<!-- BEGIN GENERATED: topic-register -->
+
+Generated from `src/agentic_events/contracts/topics.yaml` by `scripts/render_topic_table.py`. Convention: `{service}.{event-type}.v{n}`.
+
+| Topic | Producer | Consumer(s) | Carries |
+|---|---|---|---|
+| `url-shortener.request-telemetry.v1` | `url-shortener-api` | `agentic-sdlc-mlops` | envelope |
+| `mlops.drift-detected.v1` | `agentic-sdlc-mlops` | `agentic-sdlc-control-plane` | envelope |
+| `control-plane.gate-decision.v1` | `agentic-sdlc-control-plane` | `agentic-sdlc-control-plane` | envelope |
+| `control-plane.run-outcome.v1` | `agentic-sdlc-control-plane` | `agentic-sdlc-mlops` | envelope |
+| `control-plane.audit.v1` | `agentic-sdlc-control-plane` | _none_ | envelope |
+| `control-plane.dlq.v1` | `agentic-sdlc-control-plane` | _none_ | raw |
+
+<!-- END GENERATED: topic-register -->
+
+The register is `contracts/topics.yaml`; the table above is a generated view of it and CI fails if
+the two disagree. **A topic that exists on a broker but not in the register is undocumented
+infrastructure** — `tests/evaluation/` reconciles the two against a live broker in both directions.
+
+Separator is `.`, words inside a segment join with `-`, never `_`: Kafka collapses `.` and `_` to
+the same JMX metric name, so `foo.bar` and `foo_bar` would silently share metrics. Confirmed during
+broker testing.
+
+`control-plane.dlq.v1` carries **raw JSON, not an envelope**. A message reaches it precisely by
+failing the envelope contract, so wrapping the report in that contract would destroy the evidence.
+
+### Cross-repo connectivity
+
+Each repo's own `docker-compose.yml` does not redeclare this broker — they connect to it as an
+already-running external service. There is deliberately no shared multi-repo compose file, so
+`docker compose up` in every repo stays independently runnable with no sibling checkout.
+
+Three listeners exist because three **caller positions** exist, and one address cannot serve all
+three:
+
+| Caller position | Value to use | Listener |
+|---|---|---|
+| Containers on this repo's `eventbus` network | `broker:19092` | `PLAINTEXT` |
+| The Docker host (CLI tools run directly, not in a container) | `localhost:9092` | `PLAINTEXT_HOST` |
+| Containers in another repo's separate compose project | `host.docker.internal:9093` | `DOCKER_INTERNAL` |
+
+A client that bootstraps successfully will still fail every subsequent produce and fetch if it is
+handed a reconnect address it cannot reach. **Bootstrap succeeding proves nothing** — see
+[ADR 0001](docs/adr/0001-dedicated-listener-for-cross-repo-containers.md).
+
+Every listener is unauthenticated and `scope: local-dev-only`, declared explicitly in
+`listeners.yaml` rather than left as an unstated default. Any non-local deployment needs SASL/TLS
+and a superseding ADR, not a port change.
+
+### Auto-topic-creation
+
+`KAFKA_AUTO_CREATE_TOPICS_ENABLE=true`: any producer can publish to a not-yet-existing topic and
+the broker creates it, with `KAFKA_NUM_PARTITIONS=3` and replication factor 1 (single broker — no
+other value is possible). It gives zero control over per-topic partition counts, retention, or
+compaction; every auto-created topic gets the cluster defaults.
+
+**[ASSUMPTION]** 3 partitions and replication factor 1 are defensible for local/dev only.
+
+Consumers still do not learn a topic exists until their next metadata refresh.
+`agentic-sdlc-control-plane` uses pattern subscription rather than naming topics explicitly, and
+bounds discovery latency with `metadata.max.age.ms` (default 300000 ms is too slow for
+drift-to-run latency; ~30000 ms is the working value). That setting lives in its consumer config,
+not here.
+
+At real-cluster scale auto-create is replaced by explicit provisioning — a `kafka-topics.sh
+--create` step in CI or a managed topic manifest — with partitions, replication, and retention
+tuned deliberately. It is unacceptable in production because a typo silently creates a junk topic
+instead of failing loudly, defaults are rarely right for every topic at once, and any authenticated
+producer gains the implicit power to create unbounded topics with no approval gate. In this repo,
+register reconciliation is the control that keeps the trade-off visible.
+
+### Memory budget
+
+One container, `kafka`, at `mem_limit: 2 GiB`, against an 8 GiB WSL2 allocation. The full
+cross-repo budget table is authoritative in the platform's planning document, not duplicated here.
 
 ## Quick start
 
@@ -43,208 +142,177 @@ docker compose up -d
 docker compose ps            # wait for STATUS = healthy
 ```
 
-Broker is reachable at `localhost:9092` from the host, `broker:19092` from other containers on the
-same Docker network, or `host.docker.internal:9093` from containers in a different compose project
-(see [Cross-repo connectivity](#cross-repo-connectivity)).
+The broker is then reachable at the address for your caller position — see
+[Cross-repo connectivity](#cross-repo-connectivity).
 
-## Topic naming convention
-
-```
-{service}.{event-type}.v{n}
-```
-
-No tenant segment — the platform is single-tenant today. Examples used by the other repos:
-
-| Topic | Producer | Consumer(s) |
-|---|---|---|
-| `url-shortener.request-telemetry.v1` | `url-shortener-api` | `agentic-sdlc-mlops` |
-| `mlops.drift-detected.v1` | `agentic-sdlc-mlops` | `agentic-sdlc-control-plane` |
-| `control-plane.gate-decision.v1` | (human/UI, relayed by `agentic-sdlc-control-plane`'s decision API) | `agentic-sdlc-control-plane` |
-| `control-plane.run-outcome.v1` | `agentic-sdlc-control-plane` | `agentic-sdlc-mlops` |
-| `control-plane.audit.v1` | `agentic-sdlc-control-plane` | (open) |
-
-This convention is locked once any producer ships against it — changing it later requires
-touching every repo's producer/consumer config, not just this one.
-
-**Caveat confirmed during testing**: Kafka warns when topic names mix `.` and `_` in the same
-position, since both collapse to the same JMX metric name internally (e.g. `foo.bar` and `foo_bar`
-would collide). Our convention uses only `.` as a separator and `-` inside service names
-(`url-shortener`, not `url_shortener`) — never `_` — so this doesn't apply today. Don't introduce
-an underscore into a topic name without re-checking this.
-
-## `agentic_events` package
-
-The shared envelope contract, as a Pydantic model of the platform's event schema
-(`EventEnvelope`, `Producer`, `GitTarget`). Scope is deliberately narrow: envelope shape
-validation only — no topic-name helpers, no Kafka client wrapper, no serialization convenience
-functions. Each consuming repo owns its own producer/consumer code and imports this only for a
-consistent, validated envelope shape.
-
-```python
-from agentic_events import EventEnvelope, GitTarget, Producer
-
-envelope = EventEnvelope(
-    event_id=...,
-    correlation_id=run_id,
-    service="agentic-sdlc-mlops",
-    event_type="drift-detected",
-    timestamp=...,
-    producer=Producer(service="agentic-sdlc-mlops", instance_id=hostname),
-    git_target=GitTarget(repo_url="https://github.com/jayakumard10/url-shortener-api.git", branch="main"),
-    scenario_type="brownfield",
-    metrics={"p95_latency_ms": 61.8},
-)
-```
-
-**Installing it into another repo** — pinned to a tag, never tracking `main`:
-
-```
-agentic-events @ git+https://github.com/jayakumard10/agentic-sdlc-eventbus.git@v0.1.0
-```
-
-This reuses the same HTTPS + fine-grained read-only PAT credential mechanism already required for
-clone-per-run — no separate package registry needed.
-
-**Running its tests locally:**
+## Local development
 
 ```bash
 python -m venv .venv && .venv/Scripts/activate   # or .venv/bin/activate on Linux/WSL
-pip install -e ".[dev]"
-pytest --cov=agentic_events --cov-report=term-missing --cov-fail-under=100
+pip install -e ".[dev]"                          # add ,broker for the broker-backed tiers
 ```
 
-## Plug-and-play strategy (this repo's half)
+### Using the contract
 
-**(a) Auto-topic-creation** — `KAFKA_AUTO_CREATE_TOPICS_ENABLE=true` means any producer can
-publish to a not-yet-existing topic and the broker creates it on the fly, with
-`KAFKA_NUM_PARTITIONS=3` and replication factor 1 (single broker — no other value is possible
-node-count-wise). **What it does not solve**: consumers still don't know a topic exists until
-their next metadata refresh — see (b) — and it gives zero control over per-topic partition
-counts, retention, or compaction; every auto-created topic gets the cluster defaults above.
-**[ASSUMPTION]** 3 partitions/topic and replication factor 1 are defensible only for local/dev —
-flagged again in the memory budget & production section below.
+```python
+from agentic_events import EventEnvelope, GitTarget, Producer
+from agentic_events import registry
+from agentic_events.telemetry import current_traceparent
 
-**(b) Consumer-side pattern subscription** — `agentic-sdlc-control-plane`'s consumer uses
-`consumer.subscribe(pattern=...)` rather than naming topics explicitly, so it can react to
-`agentic-sdlc-mlops` and future services without a code change. Discovery latency is governed by
-the consumer's `metadata.max.age.ms`:
-- Default (300000 ms / 5 min): a topic auto-created by `agentic-sdlc-mlops` can take up to 5 minutes to appear
-  in `agentic-sdlc-control-plane`'s subscription — unacceptable for drift-to-run latency.
-- `agentic-sdlc-control-plane` must tune this down (e.g. 30000 ms / 30 s) to bound discovery latency to well under a
-  minute. Trade-off: every consumer instance in the group issues a full metadata request that
-  often, adding broker-side load that scales with `(number of consumers) / metadata.max.age.ms`.
-  At 30s and a handful of consumers this is negligible; it stops being negligible in the
-  hundreds-of-consumers range, which this platform is nowhere near.
-- This setting lives in `agentic-sdlc-control-plane`'s consumer config, not here — noted here because it's the
-  direct consequence of this repo's auto-create default.
+envelope = EventEnvelope(
+    event_id=uuid4(),
+    correlation_id=episode_id,          # per EPISODE, not per message - see below
+    service="agentic-sdlc-mlops",
+    event_type="drift-detected",
+    timestamp=datetime.now(timezone.utc),
+    producer=Producer(service="agentic-sdlc-mlops", instance_id=hostname),
+    git_target=GitTarget(repo_url="https://example.com/repo.git", branch="main"),
+    scenario_type="brownfield",
+    metrics={"metric_name": "p95_latency_ms", "threshold_pct": 20.0, ...},
+    traceparent=current_traceparent(),   # None when no tracing SDK is installed
+)
 
-**(e) What replaces auto-create at real-cluster scale**: explicit topic provisioning (e.g. a
-`kafka-topics.sh --create` step in CI, or a Terraform/Ansible-managed topic manifest) checked in
-per-repo, with per-topic partition/replication/retention tuned deliberately. Auto-create is
-unacceptable in production because (1) a typo in a producer's topic name silently creates a
-junk topic instead of failing loudly, (2) every auto-created topic inherits cluster-wide
-defaults that are almost never right for every topic at once, and (3) it gives any authenticated
-producer the implicit power to create unbounded topics — a resource-exhaustion vector with no
-approval gate.
+registry.validate_event(
+    "mlops.drift-detected.v1", metrics=envelope.metrics, payload=envelope.payload
+)
+```
 
-## Memory budget
+Three identifiers with three different lifetimes: `event_id` per message, `correlation_id` per
+episode, `traceparent` per request path. Conflating the first two makes every redelivery look like
+a new episode.
 
-This repo's compose file runs **one** container, `kafka`, at `mem_limit: 2 GiB`. The full four-repo
-cross-repo budget table (checked against the 8 GiB WSL2 allocation) is authoritative in the internal
-planning document's Infrastructure Manifests section, not duplicated here — update it there, not
-here, as repos 1, 2, and 4 are built.
+### Querying the register
 
-## Cross-repo connectivity
+```python
+from agentic_events import registry
 
-Wired and verified 2026-07-26 (against `url-shortener-api`, the first consuming repo). Each repo's
-own `docker-compose.yml` does *not* redeclare this broker — they connect to it as an already-running
-external service. There is deliberately no shared multi-repo compose file, which keeps
-`docker compose up` in every repo independently runnable with no sibling checkout. The broker
-exposes **three listeners** because "how a client reconnects for produce/fetch" (the *advertised*
-address, not just the address it initially connects to) genuinely differs by caller position — one
-address cannot correctly serve all three:
+registry.topic_names()  # every registered topic
+registry.topic("mlops.drift-detected.v1")  # producer, consumers, carries, schema
+registry.listener("DOCKER_INTERNAL")  # bind, advertised, caller position
+registry.event_schema("control-plane.audit.v1")
+```
 
-| Caller | Value | Listener |
-|---|---|---|
-| Containers on this repo's own `eventbus` network | `broker:19092` | `PLAINTEXT` |
-| Host machine (Windows/WSL2, e.g. CLI tools run directly, not in a container) | `localhost:9092` | `PLAINTEXT_HOST` |
-| Containers in another repo's own separate compose project | `host.docker.internal:9093` | `DOCKER_INTERNAL` |
+### Installing it into another repo
 
-A bug in the original design (reusing `PLAINTEXT_HOST` for cross-repo access) and the fix that led
-to this three-listener setup are documented in `docs/adr/0001`.
+Pinned to a tag, never tracking `main`:
 
-## Verification
+```
+agentic-events @ git+https://github.com/jayakumar-devaraj/agentic-sdlc-eventbus.git@v0.1.0
+```
 
-`apache/kafka-native` ships only the compiled `kafka.Kafka` binary — no `kafka-*.sh` CLI tools are
-in the image (confirmed by inspection: `/opt/kafka/bin/` doesn't exist). All admin/CLI verification
-below runs from a disposable `apache/kafka:4.1.2` (JVM, full tooling) client container attached to
-this repo's `eventbus` Docker network, talking to the broker's internal listener at `broker:19092`.
-This is why the compose file's own healthcheck is a bare TCP probe rather than a protocol-level
-check — see the comment in `docker-compose.yml`.
+This reuses the same HTTPS + fine-grained read-only PAT mechanism already required for
+clone-per-run — no separate package registry needed.
+
+### Changing the contract
+
+Any change to the envelope, the register, or the listener topology starts as a spec:
 
 ```bash
-# Broker health / API versions
-docker run --rm --network eventbus apache/kafka:4.1.2 \
-  /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server broker:19092
-
-# Confirm KRaft mode (no ZooKeeper) and cluster id
-docker run --rm --network eventbus apache/kafka:4.1.2 \
-  /opt/kafka/bin/kafka-cluster.sh cluster-id --bootstrap-server broker:19092
-
-# Prove auto-create: publish to a topic that doesn't exist yet, then list + describe it
-echo "smoke-test" | docker run --rm -i --network eventbus apache/kafka:4.1.2 \
-  /opt/kafka/bin/kafka-console-producer.sh --bootstrap-server broker:19092 \
-  --topic url-shortener.request-telemetry.v1
-docker run --rm --network eventbus apache/kafka:4.1.2 \
-  /opt/kafka/bin/kafka-topics.sh --list --bootstrap-server broker:19092
-docker run --rm --network eventbus apache/kafka:4.1.2 \
-  /opt/kafka/bin/kafka-topics.sh --describe --topic url-shortener.request-telemetry.v1 \
-  --bootstrap-server broker:19092   # expect PartitionCount: 3, ReplicationFactor: 1
-
-# Consumer-group lag (once a real consumer group exists in `agentic-sdlc-control-plane`)
-docker run --rm --network eventbus apache/kafka:4.1.2 \
-  /opt/kafka/bin/kafka-consumer-groups.sh \
-  --bootstrap-server broker:19092 --describe --group <consumer-group-name>
+python scripts/new_spec.py --contract-change "what you are changing"
 ```
+
+Then, before opening a pull request:
+
+```bash
+python scripts/export_schema.py            # regenerate the wire contract
+python scripts/render_topic_table.py       # regenerate the table above
+```
+
+### Extending it
+
+| To do this | Change | Then |
+|---|---|---|
+| Add a topic | `contracts/topics.yaml` + a schema in `contracts/schemas/` named after it | `render_topic_table.py`; the contract tier asserts the pairing |
+| Add an envelope field | `envelope.py` — optional with a default | `export_schema.py`; the compatibility gate proves it is additive |
+| Change a listener | `contracts/listeners.yaml` **and** `docker-compose.yml` | Verify from that caller position; the contract tier asserts the two match |
+| Add a rule the schema cannot express | `contract_violations()` in `envelope.py` | It warns by default; `validate_strict()` is the opt-in hard check |
+
+## Testing
+
+Four tiers, each answering a different question. The first two need nothing running.
+
+```bash
+pytest -m "unit or contract"        # every PR: schema, registry, compatibility gates
+pytest -m "integration"             # needs a broker: real envelope, real wire
+pytest -m "evaluation"              # needs a broker + Docker: the seam, per caller position
+pytest                              # everything
+```
+
+| Tier | Question it answers |
+|---|---|
+| `unit/` | Does the schema reject what it should? Does the registry refuse a corrupt spec? |
+| `contract/` | Would this change break a downstream repo? Does compose still match the listener spec? |
+| `integration/` | Does a real envelope survive a real broker and come back validating? |
+| `evaluation/` | Does each listener work **from the position it serves**? Does the register match the broker? |
+
+Test traffic goes to `eventbus.test-*` topics, never a registered one.
 
 ### Unit test coverage report — `agentic_events`
 
 ```
-Name                         Stmts   Miss  Cover   Missing
-----------------------------------------------------------
-agentic_events\__init__.py       2      0   100%
-agentic_events\envelope.py      29      0   100%
-----------------------------------------------------------
-TOTAL                           31      0   100%
+Name                              Stmts   Miss  Cover
+------------------------------------------------------
+src/agentic_events/__init__.py        3      0   100%
+src/agentic_events/envelope.py       59      0   100%
+src/agentic_events/errors.py         13      0   100%
+src/agentic_events/registry.py      132      0   100%
+src/agentic_events/telemetry.py      37      0   100%
+------------------------------------------------------
+TOTAL                               244      0   100%
 ```
 
-8 tests in `tests/test_envelope.py`: valid-envelope defaults, rejection of unknown top-level fields
-(`extra="forbid"`), rejection of an invalid `scenario_type` or wrong `schema_version`, `commit_sha`
-allowed null pre-clone, and that `metrics`/`payload` accept arbitrary event-specific shapes. 100%
-coverage is enforced in CI (`--cov-fail-under=100`) — reasonable for a package this small and
-schema-focused; revisit the threshold if the package grows scope later.
+**100% over 244 statements, and the statement count is the point.** Full coverage of a Pydantic
+model and a spec loader proves they reject what they were told to reject. It proves nothing about
+whether the contract is the *right* contract — the correlation-id defect sat underneath a fully
+covered envelope for weeks, because the envelope enforced that the field was a string and the
+disagreement was about what the string *meant*. Treat this number as a weak signal. The
+verification that carries weight is below.
 
 ### Functional verification report — broker
 
-The broker itself has no application code to unit-test — the table below is its QA deliverable
-instead: every row was actually run against a real container, not asserted from reading the compose
-file.
+`apache/kafka-native` ships only the compiled `kafka.Kafka` binary — no `kafka-*.sh` tools are in
+the image (confirmed by inspection: `/opt/kafka/bin/` does not exist). All admin verification runs
+from a disposable `apache/kafka:4.1.2` client container. That is also why the compose healthcheck is
+a bare TCP probe rather than a protocol-level check.
+
+Every row was run against a real container, not asserted from reading the compose file.
 
 | Check | Method | Result |
 |---|---|---|
 | Broker reaches `healthy` | compose healthcheck (TCP probe) | PASS — healthy within one 10s interval |
-| KRaft mode confirmed (no ZooKeeper) | `kafka-cluster.sh cluster-id` via disposable client | PASS — returned pinned `CLUSTER_ID: GbUkriPcWUY1D0RM32nhAw` |
-| Auto-create on first produce | console-producer to nonexistent topic, then `--list` | PASS — topic appeared |
+| KRaft mode confirmed (no ZooKeeper) | `kafka-cluster.sh cluster-id` via disposable client | PASS — returned pinned `CLUSTER_ID` |
+| Auto-create on first produce | console-producer to a nonexistent topic, then `--list` | PASS — topic appeared |
 | Auto-create defaults correct | `kafka-topics.sh --describe` | PASS — `PartitionCount: 3, ReplicationFactor: 1` |
-| Cluster ID + topic data persist across `docker compose restart` | created a marker topic, ran `docker compose restart kafka`, re-checked cluster-id and topic list | PASS — both survived the restart |
-| Cluster ID correctly resets on `down -v` (volume removed) | `down -v` then `up`, re-checked cluster-id | PASS — behaves as designed, not a regression |
-| `DOCKER_INTERNAL` listener reachable and correctly advertised from a container with no shared network | produced from a bare `docker run` container (no `--network eventbus`) via `host.docker.internal:9093`, consumed the message back via the internal network | PASS, after fixing the `PLAINTEXT_HOST`-reuse bug above — message was both accepted and actually retrievable, not just accepted |
+| Cluster ID + topic data persist across `docker compose restart` | marker topic, restart, re-check | PASS — both survived |
+| Cluster ID resets on `down -v` | `down -v`, `up`, re-check | PASS — behaves as designed |
+| **Envelope round-trips a real broker** | `tests/integration/` — produce, consume, re-validate | PASS — including trace context and timezone-awareness intact after serialisation |
+| **`PLAINTEXT` reachable from its caller position** | `kafka-broker-api-versions.sh` from a container on `eventbus` | PASS |
+| **`DOCKER_INTERNAL` reachable from its caller position** | same, from a container with **no** shared network | PASS — the position ADR 0001 is about |
+| **`PLAINTEXT_HOST` is *not* reachable from a foreign container** | same, negative case | PASS (correctly fails to connect) — if this ever succeeds, `DOCKER_INTERNAL` is redundant and ADR 0001 needs revisiting |
+| **Register reconciles with the live broker** | `tests/evaluation/` — both directions | PASS — no undeclared topics; `control-plane.dlq.v1` registered ahead of first use |
 
-This same sequence (health wait + auto-create validation) is what `.github/workflows/ci.yml` runs
-on every push/PR — the report above isn't a one-time manual check, it's continuously re-verified.
+These run as tests, not as a one-time manual check. Reproduce with:
 
-## Phase 2 note
+```bash
+docker compose up -d && pytest -m "integration or evaluation" -q
+```
 
-Nothing in this repo changes for Phase 2 (real ML model in `agentic-sdlc-mlops`). The event bus is
-schema-and-topic-convention driven, not payload-aware — a new topic or a v2 envelope field is a
-concern for the producing and consuming services, not a broker reconfiguration here.
+## Deployment / CI
+
+| Workflow | Trigger | What it gates |
+|---|---|---|
+| `ci.yml` | pull request, manual | lint, `mypy --strict`, unit + contract tiers at 100% coverage, schema currency, README table currency, mermaid parse, broker health + auto-create |
+| `contract-compat.yml` | pull request touching the package | The envelope schema on this branch against the one on `main`. A field becoming required fails the build. |
+| `broker-tiers.yml` | nightly, manual | Integration and evaluation tiers against a real broker, including every caller position |
+| `security.yml` | pull request, weekly | `pip-audit`, secret scan, SBOM |
+
+There is deliberately **no `push: branches: [main]` trigger.** GitHub runs pull-request checks
+against the merge result, so re-testing the merged tree pays twice for one answer. The gap that
+leaves — the merge result is only the merged tree if `main` has not moved — is closed by branch
+protection's *"Require branches to be up to date before merging"*, which is a better guarantee than
+a habit. `workflow_dispatch` is the escape hatch for running on `main` deliberately.
+
+Integration and evaluation run nightly rather than per-PR because they start a broker and pull
+client images, and the platform's Actions allowance is a binding constraint. They are also
+`workflow_dispatch`-able, and any change touching the seam should be run through them by hand
+before merge.

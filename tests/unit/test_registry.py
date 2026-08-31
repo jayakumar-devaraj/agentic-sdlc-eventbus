@@ -143,8 +143,12 @@ def test_drift_body_missing_the_metric_the_consumer_reads_is_rejected():
     with pytest.raises(PayloadValidationError) as caught:
         reg.validate_event(
             "mlops.drift-detected.v1",
-            metrics={"reference_value": 1.0, "current_value": 2.0,
-                     "relative_delta_pct": 100.0, "threshold_pct": 20.0},
+            metrics={
+                "reference_value": 1.0,
+                "current_value": 2.0,
+                "relative_delta_pct": 100.0,
+                "threshold_pct": 20.0,
+            },
             payload={
                 "reference_window": _WINDOW,
                 "current_window": _WINDOW,
@@ -193,8 +197,13 @@ def test_run_outcome_payload_stays_open_for_producer_supplied_extras():
     reg.validate_event(
         "control-plane.run-outcome.v1",
         metrics={},
-        payload={"terminal_state": "completed", "detail": "", "published": True,
-                 "branch": "fix/regression", "anything_else": 1},
+        payload={
+            "terminal_state": "completed",
+            "detail": "",
+            "published": True,
+            "branch": "fix/regression",
+            "anything_else": 1,
+        },
     )
 
 

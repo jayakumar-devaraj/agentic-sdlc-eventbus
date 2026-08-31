@@ -64,3 +64,31 @@ contract every other repo installs as a dependency. Repos in this platform split
 implementation details (its endpoints, its bugs, its internals). Referencing a tenant service by
 name as an illustrative example (e.g. in a topic-naming table) is fine; describing its internals
 is not.
+
+## The declarative contract layer
+
+Since 2026-08-31 the three things this repo publishes are declarative specs shipped inside the
+package at `src/agentic_events/contracts/`, not prose and not constants:
+
+- `topics.yaml` — the topic register. The README table is a generated view of it.
+- `listeners.yaml` — the listener topology, each entry naming the caller position it serves.
+- `schemas/*.schema.json` — per-topic shape of the envelope's open `metrics`/`payload` pair.
+- `envelope/v1.0.schema.json` — generated from the model by `scripts/export_schema.py`.
+
+They live inside the package rather than at the repository root because a contract artifact that
+is not in the wheel cannot be read by the repos that install it (ADR 0002).
+
+Regenerate both derived artifacts before opening a pull request; CI fails if either is stale:
+
+```
+python scripts/export_schema.py
+python scripts/render_topic_table.py
+```
+
+## Specs
+
+Any change to the envelope, the register, or the listener topology starts as a spec under
+`specs/`, created with `python scripts/new_spec.py --contract-change "..."`. The non-negotiables
+those specs are checked against live in `.specify/memory/constitution.md`, which supersedes
+nothing in this file — it collects what was already here, plus what ADR 0001 and the
+correlation-id defect taught, into one place a spec can be held against.
