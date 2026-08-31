@@ -5,6 +5,11 @@ Thumbs.db
 .venv/
 __pycache__/
 *.egg-info/
+# Left behind by `uv build` / `python -m build`. Neither is ever an input to anything
+# here, and building the wheel is part of verifying that the contracts actually ship -
+# which should be done often enough that it must not dirty the tree each time.
+build/
+dist/
 .pytest_cache/
 .coverage
 htmlcov/

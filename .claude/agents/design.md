@@ -14,9 +14,17 @@ change here starts encoding what an event *means* to a consumer, it belongs in t
 
 ## Rules
 
-**Topics follow `{service}.{event-type}.v{n}`, and the table in the README is the register.** A
-topic that exists on a broker but not in that table is undocumented infrastructure. Adding a topic
-means adding the row in the same change.
+**Topics follow `{service}.{event-type}.v{n}`, and `contracts/topics.yaml` is the register.** It
+was the table in the README until 2026-08-31; that table is now a generated view of the register
+and CI fails if the two disagree. A topic that exists on a broker but not in the register is
+undocumented infrastructure — and `tests/evaluation/` reconciles the two against a live broker, so
+this is a check now rather than only a rule. It found one: `control-plane.dlq.v1` had been
+produced to for weeks and appeared in no register. Adding a topic means adding the entry **and** a
+schema under `contracts/schemas/` named after it, in the same change.
+
+**A registered schema covers `metrics` as well as `payload`.** The drift topic's contract lives in
+`metrics` — the control plane reads `metric_name` and the threshold out of it — so a schema
+describing only `payload` looks complete while validating the half nobody depends on.
 
 **Listener topology is a design concern, not a config detail.** Three listeners exist because
 three caller positions exist — internal network, host, and external container — and a client that

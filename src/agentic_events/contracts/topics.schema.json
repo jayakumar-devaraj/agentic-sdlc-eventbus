@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jayakumar-devaraj/agentic-sdlc-eventbus/contracts/topics.schema.json",
+  "title": "Topic register",
+  "description": "Meta-schema for topics.yaml. Validates the register's shape; the convention regex inside the register validates the topic names themselves.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "convention", "topics"],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "convention": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pattern", "regex"],
+      "properties": {
+        "pattern": { "type": "string", "minLength": 1 },
+        "regex": { "type": "string", "format": "regex", "minLength": 1 },
+        "notes": { "type": "string" }
+      }
+    },
+    "topics": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "producer", "consumers", "carries", "event_schema", "summary"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "producer": { "type": "string", "minLength": 1 },
+          "consumers": {
+            "description": "May be empty. An empty list is a deliberate 'no consumer today' state and the register says so in the topic's summary.",
+            "type": "array",
+            "uniqueItems": true,
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "carries": {
+            "description": "'envelope' - the message is an EventEnvelope and the registered schema constrains its open metrics/payload pair. 'raw' - the message is a bare JSON object and the registered schema constrains the whole of it. The distinction is real: the dead-letter topic exists to preserve messages that failed the envelope contract, so it cannot itself be carried in one.",
+            "enum": ["envelope", "raw"]
+          },
+          "event_schema": {
+            "description": "Path, relative to this file's directory, of the JSON Schema for this topic's event body.",
+            "type": "string",
+            "pattern": "^schemas/[A-Za-z0-9._-]+\\.schema\\.json$"
+          },
+          "summary": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  }
+}

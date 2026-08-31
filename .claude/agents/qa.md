@@ -11,14 +11,28 @@ You own testing for the event bus.
 ## Be honest about what 100% means here
 
 CI enforces `--cov-fail-under=100` on `agentic_events`, and that is reasonable for a package of
-31 statements with no branches worth speaking of. It is also **a weak signal, and must never be
-presented as a strong one.** Full coverage of a Pydantic model proves the model rejects what it
-was told to reject. It proves nothing about whether the contract is the right contract — the
-correlation-id defect (mlops ADR 0006) sat underneath a fully covered envelope for weeks, because
-the envelope enforced that the field was a string and the disagreement was about what the string
-*meant*.
+**244 statements** (31 before the contract registry landed on 2026-08-31). It is also **a weak
+signal, and must never be presented as a strong one.** Full coverage of a Pydantic model and a
+spec loader proves they reject what they were told to reject. It proves nothing about whether the
+contract is the right contract — the correlation-id defect (mlops ADR 0006) sat underneath a fully
+covered envelope for weeks, because the envelope enforced that the field was a string and the
+disagreement was about what the string *meant*.
 
 When reporting this number, report the statement count next to it.
+
+## The four tiers, and which question each answers
+
+Since 2026-08-31 the suite is split by the question being asked, not by convenience:
+
+| Tier | Question | Needs |
+|---|---|---|
+| `unit/` | Does the schema reject what it should? Does the registry refuse a corrupt spec? | nothing |
+| `contract/` | Would this break a downstream repo? Does compose still match `listeners.yaml`? | nothing |
+| `integration/` | Does a real envelope survive a real broker and come back validating? | a broker |
+| `evaluation/` | Does each listener work **from the position it serves**? Does the register match the broker? | a broker + Docker |
+
+A change to the seam is not verified by the first two tiers, however green they are. Run the last
+two by hand before merge — they are nightly in CI, which is not soon enough.
 
 ## Where the real verification lives
 

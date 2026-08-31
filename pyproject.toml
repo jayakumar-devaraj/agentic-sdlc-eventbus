@@ -5,23 +5,126 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "agentic-events"
 version = "0.1.0"
-description = "Shared event envelope contract for the agentic-sdlc-* platform repos"
+description = "Shared event envelope contract and topic registry for the agentic-sdlc-* platform repos"
 requires-python = ">=3.12"
 dependencies = [
     "pydantic==2.10.4",
+    # The declarative contract layer (contracts/*.yaml) is read at runtime by consumers
+    # querying the register, so its parser and validator are runtime dependencies rather
+    # than dev ones. Loading is lazy; these are only imported on first registry use.
+    "pyyaml==6.0.2",
+    "jsonschema==4.23.0",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest==8.3.4",
+    # 9.x, not 8.3.4: pytest through 9.0.2 has PYSEC-2026-1845, a local privilege-escalation
+    # and denial-of-service via the predictable /tmp/pytest-of-{user} directory pattern on
+    # UNIX. Dev-only and never shipped to a consumer, but this repository's own security
+    # workflow fails the build on it, which is the workflow behaving correctly.
+    "pytest==9.1.1",
     "pytest-cov==7.1.0",
+    "ruff==0.16.5",
+    "mypy==2.3.1",
+    "types-pyyaml==6.0.12.20240917",
+    "types-jsonschema==4.23.0.20240813",
+]
+# Only the integration/ and evaluation/ tiers need a Kafka client. Keeping it out of
+# `dev` means the unit and contract tiers - the ones that run on every pull request -
+# install nothing that talks to a broker.
+broker = [
+    "confluent-kafka==2.6.1",
 ]
 
+# src/ layout, deliberately. With the package at the repository root, `pytest` imported
+# the working tree and the built wheel was never exercised by anything. This package is
+# installed by three sibling repositories, so the artifact they receive is the artifact
+# that must be tested. See docs/adr/0004.
 [tool.setuptools.packages.find]
+where = ["src"]
 include = ["agentic_events*"]
+
+[tool.setuptools.package-data]
+# PEP 561. Without this marker the package's annotations are invisible to downstream
+# type checkers, which silently degrade every `EventEnvelope` to `Any`.
+#
+# The contracts ship inside the package rather than sitting at the repository root.
+# A contract artifact that is not in the wheel cannot be read by the three repositories
+# that install this package, which is the entire reason it exists. See docs/adr/0002.
+agentic_events = [
+    "py.typed",
+    "contracts/*.yaml",
+    "contracts/*.json",
+    "contracts/schemas/*.json",
+    "contracts/envelope/*.json",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# importlib mode keeps the src/ layout honest: tests resolve `agentic_events` through
+# the installed distribution rather than by accident of the current directory.
+addopts = "--import-mode=importlib --strict-markers"
+markers = [
+    "unit: schema behaviour, no I/O. Runs everywhere.",
+    "contract: does this change break a downstream repository? No I/O. Runs everywhere.",
+    "integration: needs a running broker. Produces and consumes a real envelope.",
+    "evaluation: needs a running broker. Exercises the seam from a specific caller position.",
+]
 
 [tool.coverage.run]
 source = ["agentic_events"]
+
+[tool.coverage.report]
+# Reported alongside the percentage, never instead of it: a percentage over a small
+# module count is a weak signal and this repository says so out loud (.claude/agents/qa.md).
+show_missing = true
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests", "scripts"]
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+    "E", "W",   # pycodestyle
+    "F",        # pyflakes
+    "I",        # import sorting
+    "B",        # bugbear
+    "UP",       # pyupgrade
+    "ANN",      # annotations required
+    "D",        # docstrings required
+    "RUF",
+]
+ignore = [
+    "D203",  # conflicts with D211
+    "D213",  # conflicts with D212
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests document themselves through their names; a docstring on every assertion helper
+# is noise rather than information.
+"tests/**" = [
+    "D100", "D101", "D102", "D103", "D104",
+    "ANN001", "ANN002", "ANN003", "ANN201", "ANN202",
+    # Kafka client objects have no useful public type to annotate against, and the
+    # fixtures that build them are plumbing rather than contract.
+    "ANN401",
+]
+"scripts/**" = ["D100"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.mypy]
+python_version = "3.12"
+files = ["src", "scripts"]
+strict = true
+warn_unreachable = true
+show_error_codes = true
+
+[[tool.mypy.overrides]]
+# Both are soft dependencies this package deliberately does not require. confluent-kafka
+# is only needed by the broker-backed test tiers; opentelemetry is soft-imported so that
+# installing this contract package never forces a tracing SDK on a consumer.
+module = ["confluent_kafka.*", "opentelemetry.*"]
+ignore_missing_imports = true

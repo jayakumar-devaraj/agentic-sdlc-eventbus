@@ -1,0 +1,34 @@
+# Weekly, grouped. Ungrouped Dependabot on a repository with this many pinned versions produces
+# a pull request per dependency per week, each triggering a full CI run - and the platform's
+# Actions allowance is a binding constraint. One grouped PR per ecosystem answers the same
+# question for a fraction of the minutes.
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    groups:
+      # Tooling moves often and breaks nothing downstream, so it travels together.
+      dev-tooling:
+        patterns: ["ruff", "mypy", "pytest*", "types-*"]
+      # Runtime dependencies reach three other repositories through this package, so they get
+      # their own pull request and their own read.
+      runtime:
+        patterns: ["pydantic", "pyyaml", "jsonschema", "confluent-kafka"]
+    commit-message:
+      prefix: "Bump"
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 2
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "Bump"

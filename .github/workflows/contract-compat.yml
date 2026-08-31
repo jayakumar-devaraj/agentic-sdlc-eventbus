@@ -1,0 +1,83 @@
+name: contract-compat
+
+# The gate that did not exist.
+#
+# `.claude/agents/development.md` has always said: additive by default, and a field that becomes
+# required is a breaking change needing a new schema version rather than a patch. Nothing enforced
+# it. `agentic_events` is installed by agentic-sdlc-control-plane, agentic-sdlc-mlops, and
+# url-shortener-api, so "whoever remembered the rule" was the only control standing between a
+# pull request and three broken producers.
+#
+# This runs only when the package or its contracts change, because that is the only time the
+# answer can differ - and the Actions allowance is a binding constraint.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "src/agentic_events/**"
+      - "scripts/export_schema.py"
+      - "scripts/check_compatibility.py"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  compatibility:
+    name: does this break a downstream repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The merge base is needed to build the baseline, and a shallow clone does not have it.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install package
+        run: pip install -e "."
+
+      - name: Take the schema as it exists on the target branch
+        id: baseline
+        # Where the target branch already carries an exported schema, that file is the baseline.
+        # Where it does not - which is true until this change merges - there is nothing to
+        # compare against and the checker says so and passes.
+        run: |
+          mkdir -p /tmp/compat
+          if git cat-file -e "origin/${{ github.base_ref }}:src/agentic_events/contracts/envelope/v1.0.schema.json" 2>/dev/null; then
+            git show "origin/${{ github.base_ref }}:src/agentic_events/contracts/envelope/v1.0.schema.json" \
+              > /tmp/compat/baseline.json
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "no exported schema on ${{ github.base_ref }} yet; nothing to compare against"
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Regenerate this branch's schema
+        # Regenerated rather than trusted. The committed copy is separately checked for staleness
+        # in ci.yml, but this gate must compare the *model*, not an artifact that might be behind
+        # it - otherwise a breaking model change with a stale export would pass both jobs.
+        run: python scripts/export_schema.py
+
+      - name: Compare
+        if: steps.baseline.outputs.found == 'true'
+        run: |
+          python scripts/check_compatibility.py \
+            /tmp/compat/baseline.json \
+            src/agentic_events/contracts/envelope/v1.0.schema.json
+
+      - name: Explain a failure
+        if: failure()
+        run: |
+          echo "::notice::A breaking envelope change is not forbidden - making one quietly is."
+          echo "::notice::Record it: .specify/templates/contract-change-template.md"
+          echo "::notice::It needs a new schema version and a rollout order across repositories."

@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jayakumar-devaraj/agentic-sdlc-eventbus/contracts/schemas/control-plane.run-outcome.v1.schema.json",
+  "title": "control-plane.run-outcome.v1 event body",
+  "description": "How a run ended. The producer merges caller-supplied extra keys into payload by design, so payload is open on purpose: what a run produced and where it went ride here precisely so that reporting delivery does not version the envelope every repository installs.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["metrics", "payload"],
+  "properties": {
+    "metrics": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Optional and free-form. The producer defaults it to an empty object."
+    },
+    "payload": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["terminal_state", "detail"],
+      "properties": {
+        "terminal_state": { "type": "string", "minLength": 1 },
+        "detail": {
+          "description": "Empty string is the producer's default and is valid - a clean outcome has nothing to explain.",
+          "type": "string"
+        },
+        "commit_sha_after": {
+          "description": "Set only when a run produced a commit. Distinct from git_target.commit_sha on the envelope, which stays the clone-time revision because that is what the shared contract means by it.",
+          "type": ["string", "null"]
+        },
+        "publish_mode": { "type": "string" },
+        "published": { "type": "boolean" },
+        "branch": { "type": "string" }
+      }
+    }
+  }
+}

@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jayakumar-devaraj/agentic-sdlc-eventbus/contracts/listeners.schema.json",
+  "title": "Broker listener topology",
+  "description": "Meta-schema for listeners.yaml. Every listener must name the caller position it serves, because that is the thing ADR 0001 showed cannot be inferred from the address.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "cluster_id", "listeners", "security_posture"],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "cluster_id": { "type": "string", "minLength": 1 },
+    "listeners": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "caller_position", "bind", "advertised", "security_protocol", "scope", "serves"],
+        "properties": {
+          "name": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]*$" },
+          "caller_position": {
+            "description": "Who reconnects through this listener. The closed set is the point: a new value means a new position was discovered and ADR 0001 needs revisiting.",
+            "enum": ["internal-network", "intra-cluster", "host-machine", "foreign-container"]
+          },
+          "bind": { "type": "string", "pattern": "^[A-Za-z0-9._-]+:[0-9]{2,5}$" },
+          "advertised": {
+            "description": "null only for listeners no client ever reconnects through, i.e. the controller quorum.",
+            "type": ["string", "null"],
+            "pattern": "^[A-Za-z0-9._-]+:[0-9]{2,5}$"
+          },
+          "security_protocol": { "enum": ["PLAINTEXT", "SSL", "SASL_PLAINTEXT", "SASL_SSL"] },
+          "scope": { "enum": ["local-dev-only", "non-local"] },
+          "serves": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "security_posture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["authentication", "encryption", "rationale", "non_local_requirement"],
+      "properties": {
+        "authentication": { "enum": ["none", "sasl"] },
+        "encryption": { "enum": ["none", "tls"] },
+        "rationale": { "type": "string", "minLength": 1 },
+        "non_local_requirement": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

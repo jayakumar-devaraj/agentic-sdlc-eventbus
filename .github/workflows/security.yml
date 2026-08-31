@@ -1,0 +1,110 @@
+name: security
+
+# Supply chain. This repository had none of this: no vulnerability scan, no secret scan, no SBOM,
+# and direct dependencies pinned exactly while every transitive dependency floated.
+#
+# It matters more here than the size of the package suggests. `agentic_events` is installed by
+# three other repositories, so anything that reaches this package's dependency tree reaches
+# theirs.
+on:
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly, because a dependency does not need a pull request to become vulnerable.
+    - cron: "0 4 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: dependency audit and SBOM
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install package with every extra
+        # Every extra, deliberately: `broker` pulls confluent-kafka, which is the largest thing
+        # this repository can put into a consumer's environment and the one least likely to be
+        # audited elsewhere.
+        #
+        # pip-audit emits CycloneDX itself, so it produces the SBOM too. An earlier version of
+        # this job also installed cyclonedx-bom and could never resolve: pip-audit 2.7.3 requires
+        # cyclonedx-python-lib <8 and cyclonedx-bom 5.1.1 requires >=8. One tool, no conflict.
+        run: |
+          pip install -e ".[dev,broker]"
+          pip install pip-audit==2.7.3
+
+      - name: Audit installed dependencies
+        # Fails the build on a vulnerability. An advisory that only prints is a notification,
+        # not a gate.
+        #
+        # --skip-editable, and no --strict: this repository installs itself editable, and
+        # agentic-events is not on PyPI to be looked up. --strict turns every skipped
+        # distribution into an error, which would fail this job permanently for a reason that
+        # has nothing to do with security. Vulnerabilities still fail the build without it -
+        # --strict governs unauditable packages, not findings.
+        run: pip-audit --desc --skip-editable
+
+      - name: Generate SBOM
+        # Runs after the audit, so on a green build this is a straight re-serialisation of a
+        # tree already known to be clean.
+        run: pip-audit --skip-editable --format cyclonedx-json --output sbom.json
+
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom.json
+          retention-days: 30
+
+  secrets:
+    name: secret scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # gitleaks needs history to scan commits rather than just the working tree. A secret
+          # removed in a later commit is still a leaked secret.
+          fetch-depth: 0
+
+      - name: Scan for committed secrets
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  no-local-paths:
+    name: no local machine paths in committed files
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check
+        # CLAUDE.md and the constitution both forbid these. It was a habit; now it is a gate.
+        #
+        # Scoped to tracked files, so an untracked scratch file cannot defeat it. Two files are
+        # excluded because they *state the rule* using the pattern it forbids - this workflow,
+        # and CLAUDE.md, whose wording is literally "Never reference local machine paths
+        # (`C:\Users\...`)". Found by running the gate rather than by reasoning about it; the
+        # first run failed on the document that defines the rule.
+        run: |
+          if git grep -nIE 'C:[\\/]+(Users|srcCode)[\\/]+' -- . \
+               ':!.github/workflows/security.yml' ':!CLAUDE.md'; then
+            echo "::error::committed files must not reference local machine paths"
+            exit 1
+          fi
+          echo "no local machine paths found"

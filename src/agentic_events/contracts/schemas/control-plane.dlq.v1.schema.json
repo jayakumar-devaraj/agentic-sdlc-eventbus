@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jayakumar-devaraj/agentic-sdlc-eventbus/contracts/schemas/control-plane.dlq.v1.schema.json",
+  "title": "control-plane.dlq.v1 message",
+  "description": "The dead-letter report for a message that could not be processed. This topic carries a RAW JSON object rather than an EventEnvelope, and that is deliberate: the whole reason a message lands here is that it failed the envelope contract, so validating the report against that same contract would destroy the evidence it exists to preserve. Because there is no envelope, this schema describes the entire message rather than the metrics/payload pair.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["source_topic", "error", "failed_at", "reported_by", "raw_value"],
+  "properties": {
+    "source_topic": { "type": "string", "minLength": 1 },
+    "error": { "type": "string", "minLength": 1 },
+    "failed_at": { "type": "string", "format": "date-time" },
+    "reported_by": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["service", "instance_id"],
+      "properties": {
+        "service": { "type": "string", "minLength": 1 },
+        "instance_id": { "type": "string", "minLength": 1 }
+      }
+    },
+    "raw_value": {
+      "description": "The undecodable original, as a string. Decoded with errors='replace', so it may contain replacement characters - that is preservation working, not corruption.",
+      "type": "string"
+    }
+  }
+}

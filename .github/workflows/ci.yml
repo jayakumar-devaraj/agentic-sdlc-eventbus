@@ -28,10 +28,17 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
 
+# Least privilege at the top, raised per job only where a job actually needs more. The default
+# repository token scope is far wider than anything here needs: this workflow reads code and
+# reports a status, and that is all.
+permissions:
+  contents: read
+
 jobs:
-  agentic-events-tests:
+  quality:
+    name: lint, types, and the contract gates
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 6
     steps:
       - uses: actions/checkout@v4
 
@@ -44,29 +51,59 @@ jobs:
           cache-dependency-path: pyproject.toml
 
       - name: Install package with dev dependencies
+        # No `broker` extra. The unit and contract tiers must not need a Kafka client, and
+        # installing one here would let a dependency on it creep in unnoticed.
         run: pip install -e ".[dev]"
 
-      - name: Run tests with coverage
-        run: pytest --cov=agentic_events --cov-report=term-missing --cov-fail-under=100
+      - name: Lint
+        run: ruff check .
+
+      - name: Formatting
+        run: ruff format --check .
+
+      - name: Types
+        run: mypy
+
+      - name: Unit and contract tiers
+        # Coverage is 100% over a small package. That is a weak signal and this repository says
+        # so out loud - `--cov-report=term-missing` prints the statement count next to the
+        # percentage so the number is never reported without its denominator (constitution,
+        # Article IV). The verification that carries weight is in the broker tiers.
+        run: |
+          pytest -m "unit or contract" \
+            --cov=agentic_events --cov-report=term-missing --cov-fail-under=100
+
+      - name: The exported envelope schema matches the model
+        # Without this, the model could change and the artifact three other repositories diff
+        # against would silently stay behind.
+        run: python scripts/export_schema.py --check
+
+      - name: The README topic table matches the register
+        run: python scripts/render_topic_table.py --check
 
       - name: Assert every mermaid diagram parses
         # "The diagrams render on GitHub" has broken three times, and every time the
         # repository looked fine locally while GitHub showed "Unable to render rich
         # display" to anyone browsing it. Parsing is cheap and catches the whole class
         # seen so far; rendering needs a headless browser and is not worth the fragility.
+        #
+        # Versions are pinned and lifecycle scripts are disabled. This step installs from the
+        # network into a trusted CI context on every run; leaving it unpinned made the build
+        # depend on whatever npm resolved that morning.
         run: |
-          npm install --no-fund --no-audit --no-save mermaid jsdom
+          npm install --no-fund --no-audit --no-save --ignore-scripts \
+            mermaid@11.4.1 jsdom@25.0.1
           node scripts/validate-mermaid.mjs
 
   compose-up-and-verify:
+    name: broker starts and auto-creates
     runs-on: ubuntu-latest
-    timeout-minutes: 5
-    # Serialised behind the tests purely to stop paying for a broker start-up when the tests have
-    # already failed. It costs the same minutes on a green run - the two jobs' times add either
-    # way - and saves all of them on a red one. The price is wall-clock on a passing run, which is
-    # the right trade while the allowance is the binding constraint. Both agentic-sdlc-mlops and
-    # agentic-sdlc-control-plane already gate their downstream jobs this way.
-    needs: agentic-events-tests
+    timeout-minutes: 6
+    # Serialised behind the quality job purely to stop paying for a broker start-up when the
+    # cheap checks have already failed. It costs the same minutes on a green run - the two jobs'
+    # times add either way - and saves all of them on a red one. The price is wall-clock on a
+    # passing run, which is the right trade while the allowance is the binding constraint.
+    needs: quality
     steps:
       - uses: actions/checkout@v4
 
@@ -94,10 +131,10 @@ jobs:
         run: |
           docker run --rm --network eventbus apache/kafka:4.1.2 \
             /opt/kafka/bin/kafka-topics.sh --create --if-not-exists \
-            --topic url-shortener.request-telemetry.v1 --bootstrap-server broker:19092
+            --topic eventbus.test-autocreate.v1 --bootstrap-server broker:19092
           docker run --rm --network eventbus apache/kafka:4.1.2 \
             /opt/kafka/bin/kafka-topics.sh --list --bootstrap-server broker:19092 \
-            | grep -q "url-shortener.request-telemetry.v1"
+            | grep -q "eventbus.test-autocreate.v1"
 
       - name: Tear down
         if: always()
