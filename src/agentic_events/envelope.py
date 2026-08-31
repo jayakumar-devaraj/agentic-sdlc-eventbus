@@ -1,3 +1,5 @@
+"""The Universal Event Contract envelope, shared by every agentic-sdlc-* repository."""
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -10,6 +12,8 @@ SCHEMA_VERSION: Literal["1.0"] = "1.0"
 
 
 class Producer(BaseModel):
+    """The service instance that emitted an event."""
+
     model_config = ConfigDict(extra="forbid")
 
     service: str
@@ -17,6 +21,8 @@ class Producer(BaseModel):
 
 
 class GitTarget(BaseModel):
+    """The repository, branch, and commit an event refers to."""
+
     model_config = ConfigDict(extra="forbid")
 
     repo_url: str
@@ -27,10 +33,13 @@ class GitTarget(BaseModel):
 class EventEnvelope(BaseModel):
     """The Universal Event Contract envelope shared by all agentic-sdlc-* repos.
 
-    Mirrors the JSON Schema in 4-repo-migration-PLAN.md section 2. `metrics`
-    and `payload` are intentionally open (event_type-specific) — only the
-    envelope shape itself is validated here, never a specific event_type's
-    business payload.
+    The wire form of this model is exported to ``contracts/envelope/v1.0.schema.json``
+    and that file, not this class, is the artifact downstream repositories diff against.
+
+    ``metrics`` and ``payload`` are intentionally open: only the envelope shape is
+    validated here, never a specific ``event_type``'s business payload. Those are
+    registered separately under ``contracts/payloads/`` and validated on demand through
+    :func:`agentic_events.registry.validate_payload`.
     """
 
     model_config = ConfigDict(extra="forbid")

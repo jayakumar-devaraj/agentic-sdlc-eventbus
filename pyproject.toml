@@ -5,23 +5,101 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "agentic-events"
 version = "0.1.0"
-description = "Shared event envelope contract for the agentic-sdlc-* platform repos"
+description = "Shared event envelope contract and topic registry for the agentic-sdlc-* platform repos"
 requires-python = ">=3.12"
 dependencies = [
     "pydantic==2.10.4",
+    # The declarative contract layer (contracts/*.yaml) is loaded and validated at
+    # import time, so its parser and validator are runtime dependencies, not dev ones.
+    "pyyaml==6.0.2",
+    "jsonschema==4.23.0",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest==8.3.4",
     "pytest-cov==7.1.0",
+    "ruff==0.16.5",
+    "mypy==2.3.1",
+    "types-pyyaml==6.0.12.20240917",
+]
+# Only the integration/ and evaluation/ tiers need a Kafka client. Keeping it out of
+# `dev` means the unit and contract tiers - the ones that run on every pull request -
+# install nothing that talks to a broker.
+broker = [
+    "confluent-kafka==2.6.1",
 ]
 
+# src/ layout, deliberately. With the package at the repository root, `pytest` imported
+# the working tree and the built wheel was never exercised by anything. This package is
+# installed by three sibling repositories, so the artifact they receive is the artifact
+# that must be tested. See docs/adr/0004.
 [tool.setuptools.packages.find]
+where = ["src"]
 include = ["agentic_events*"]
+
+[tool.setuptools.package-data]
+# PEP 561. Without this marker the package's annotations are invisible to downstream
+# type checkers, which silently degrade every `EventEnvelope` to `Any`.
+agentic_events = ["py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# importlib mode keeps the src/ layout honest: tests resolve `agentic_events` through
+# the installed distribution rather than by accident of the current directory.
+addopts = "--import-mode=importlib --strict-markers"
+markers = [
+    "unit: schema behaviour, no I/O. Runs everywhere.",
+    "contract: does this change break a downstream repository? No I/O. Runs everywhere.",
+    "integration: needs a running broker. Produces and consumes a real envelope.",
+    "evaluation: needs a running broker. Exercises the seam from a specific caller position.",
+]
 
 [tool.coverage.run]
 source = ["agentic_events"]
+
+[tool.coverage.report]
+# Reported alongside the percentage, never instead of it: a percentage over a small
+# module count is a weak signal and this repository says so out loud (.claude/agents/qa.md).
+show_missing = true
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests", "scripts"]
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+    "E", "W",   # pycodestyle
+    "F",        # pyflakes
+    "I",        # import sorting
+    "B",        # bugbear
+    "UP",       # pyupgrade
+    "ANN",      # annotations required
+    "D",        # docstrings required
+    "RUF",
+]
+ignore = [
+    "D203",  # conflicts with D211
+    "D213",  # conflicts with D212
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests document themselves through their names; a docstring on every assertion helper
+# is noise rather than information.
+"tests/**" = ["D100", "D101", "D102", "D103", "D104", "ANN001", "ANN002", "ANN003", "ANN201", "ANN202"]
+"scripts/**" = ["D100"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.mypy]
+python_version = "3.12"
+files = ["src"]
+strict = true
+warn_unreachable = true
+show_error_codes = true
+
+[[tool.mypy.overrides]]
+module = ["confluent_kafka.*"]
+ignore_missing_imports = true

@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
@@ -13,7 +13,7 @@ def _valid_kwargs(**overrides):
         correlation_id="0190f7d1-2a3b-7c4d-8e5f-6a7b8c9d0e1f",
         service="agentic-sdlc-mlops",
         event_type="drift-detected",
-        timestamp=datetime.now(timezone.utc),
+        timestamp=datetime.now(UTC),
         producer=Producer(service="agentic-sdlc-mlops", instance_id="mlops-consumer-7f9c"),
         git_target=GitTarget(
             repo_url="https://github.com/jayakumard10/url-shortener-api.git",
